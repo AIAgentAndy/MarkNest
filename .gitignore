@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Chrome extension packaged output
+dist/
+*.crx
+*.pem
+release/
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# TypeScript cache
+*.tsbuildinfo
+next-env.d.ts
+
+# Tool caches
+.eslintcache
+.stylelintcache
+.vercel/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Package manager caches
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnpm-store/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local release notes
+docs/chrome-web-store-publishing-guide.md
