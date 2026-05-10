@@ -6,15 +6,15 @@ MarkNest 是一个本地优先的 Markdown 文档阅读工作区。它以 Chrome
 
 ## 产品预览
 
-![目录浏览](./public/readme/1-目录.png)
+![目录浏览](./docs/readme/1-目录.png)
 
-![单文件浏览器内打开](./public/readme/2-单文件浏览器内.png)
+![单文件浏览器内打开](./docs/readme/2-单文件浏览器内.png)
 
-![本地直接打开](./public/readme/3-本地直接打开.png)
+![本地直接打开](./docs/readme/3-本地直接打开.png)
 
-![正文阅读](./public/readme/4-正文.png)
+![正文阅读](./docs/readme/4-正文.png)
 
-![Mermaid 全屏缩放](./public/readme/5-全屏缩放.png)
+![Mermaid 全屏缩放](./docs/readme/5-全屏缩放.png)
 
 ## 项目定位
 
