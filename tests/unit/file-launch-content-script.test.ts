@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createLocalDirectoryLaunchMessage,
   createLocalMarkdownLaunchMessage,
+  shouldLaunchLocalMarkdownDirectory,
   shouldLaunchLocalMarkdown
 } from '../../extension/file-launch-content-script';
 
@@ -10,6 +12,13 @@ describe('file-launch-content-script', () => {
     expect(shouldLaunchLocalMarkdown('file:///Users/example/demo.markdown')).toBe(true);
     expect(shouldLaunchLocalMarkdown('file:///Users/example/demo.txt')).toBe(false);
     expect(shouldLaunchLocalMarkdown('https://example.com/demo.md')).toBe(false);
+  });
+
+  it('识别 file:// 本地目录 URL', () => {
+    expect(shouldLaunchLocalMarkdownDirectory('file:///Users/example/docs/')).toBe(true);
+    expect(shouldLaunchLocalMarkdownDirectory('file:///')).toBe(true);
+    expect(shouldLaunchLocalMarkdownDirectory('file:///Users/example/docs/demo.md')).toBe(false);
+    expect(shouldLaunchLocalMarkdownDirectory('https://example.com/docs/')).toBe(false);
   });
 
   it('从 Chrome 打开的 Markdown file 页面提取文件名和正文', () => {
@@ -32,6 +41,37 @@ describe('file-launch-content-script', () => {
       fileName: 'My Doc.md',
       fileUrl: 'file:///Users/example/My%20Doc.md',
       markdown: '# Title\n\n正文'
+    });
+  });
+
+  it('从 Chrome 本地目录页提取 Markdown 文件链接', () => {
+    document.body.innerHTML = [
+      '<a href="README.md">README.md</a>',
+      '<a href="设计文档.markdown">设计文档.markdown</a>',
+      '<a href="notes.txt">notes.txt</a>',
+      '<a href="../">Parent Directory</a>',
+      '<a href="sub/">sub/</a>'
+    ].join('');
+
+    const message = createLocalDirectoryLaunchMessage(
+      document,
+      'file:///Users/example/docs/'
+    );
+
+    expect(message).toEqual({
+      type: 'MARKNEST_OPEN_LOCAL_DIRECTORY_URL',
+      directoryName: 'docs',
+      directoryUrl: 'file:///Users/example/docs/',
+      entries: [
+        {
+          name: 'README.md',
+          fileUrl: 'file:///Users/example/docs/README.md'
+        },
+        {
+          name: '设计文档.markdown',
+          fileUrl: 'file:///Users/example/docs/%E8%AE%BE%E8%AE%A1%E6%96%87%E6%A1%A3.markdown'
+        }
+      ]
     });
   });
 });

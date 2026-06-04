@@ -62,3 +62,5 @@ temp/
 
 # Local release notes
 docs/chrome-web-store-publishing-guide.md
+docs/*
+!docs/readme/*

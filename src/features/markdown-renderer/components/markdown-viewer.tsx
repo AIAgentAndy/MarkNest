@@ -112,6 +112,7 @@ export function MarkdownViewer({
       <section className="markdown-empty">
         <h2>选择左侧 Markdown 文件开始阅读</h2>
         <p>也可以先点击顶部按钮打开本地目录或单个 Markdown 文件。</p>
+        <p>免重复目录授权：在 Chrome 扩展详情页开启“允许访问文件网址”，再打开 file:// 本地目录地址。</p>
       </section>
     );
   }

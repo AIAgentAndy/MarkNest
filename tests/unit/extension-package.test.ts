@@ -44,7 +44,14 @@ describe('Chrome 扩展打包产物', () => {
     expect(manifest.host_permissions).toEqual(['file:///*']);
     expect(manifest.content_scripts).toEqual([
       {
-        matches: ['file:///*.md', 'file:///*.markdown', 'file:///*.mdown', 'file:///*.mkd'],
+        matches: [
+          'file:///*.md',
+          'file:///*.markdown',
+          'file:///*.mdown',
+          'file:///*.mkd',
+          'file://*/*/',
+          'file:///'
+        ],
         js: ['file-launch-content-script.js'],
         run_at: 'document_idle'
       }

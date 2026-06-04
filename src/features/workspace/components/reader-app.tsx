@@ -33,7 +33,10 @@ import {
 } from '@/features/markdown-renderer/lib/local-asset-resolver';
 import type { PermissionAwareFileSystemHandle } from '@/shared/browser/file-system-types';
 import { getParentSegments, pathSegmentsToId } from '@/shared/path/path-utils';
-import { consumeExtensionLaunchPayload } from '../lib/extension-launch';
+import {
+  consumeExtensionLaunchPayload,
+  type ExtensionDirectoryLaunchPayload
+} from '../lib/extension-launch';
 import {
   createWorkspaceRecord,
   getWorkspacePermission,
@@ -47,12 +50,21 @@ import {
 import { sampleDirectory, sampleMarkdownByPath } from '../lib/sample-workspace';
 import type { ReaderSession, ReaderTheme, SidebarMode, WorkspaceRecord } from '../types';
 
-type FileHandleEntry = {
+type FileSystemHandleEntry = {
   handle: FileSystemFileHandle;
   parentHandle: FileSystemDirectoryHandle;
 };
 
+type FileUrlHandleEntry = {
+  fileUrl: string;
+  size: number;
+  lastModified: number;
+};
+
+type FileHandleEntry = FileSystemHandleEntry | FileUrlHandleEntry;
+
 type ReaderStatus = 'idle' | 'loading' | 'ready' | 'error';
+type DirectoryRestoreSession = Extract<ReaderSession, { mode: 'directory' }>;
 
 const topbarCollapsedStorageKey = 'md-view-topbar-collapsed';
 const authorGithubUrl = 'https://github.com/AIAgentAndy/MarkNest';
@@ -84,6 +96,8 @@ export function ReaderApp() {
   const [scrollTopVisible, setScrollTopVisible] = useState(false);
   const [refreshingDirectory, setRefreshingDirectory] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const [sessionAwaitingPermission, setSessionAwaitingPermission] =
+    useState<DirectoryRestoreSession | null>(null);
 
   const resolvedTheme = useResolvedTheme(theme);
   const supportsFileSystem = isFileSystemAccessSupported();
@@ -145,7 +159,7 @@ export function ReaderApp() {
   }, []);
 
   const loadExtensionLaunchFile = useCallback((payload: Awaited<ReturnType<typeof consumePendingExtensionLaunch>>) => {
-    if (!payload) {
+    if (!payload || payload.type !== 'file-url') {
       return;
     }
 
@@ -172,13 +186,102 @@ export function ReaderApp() {
     setMessage('已从本地文件打开 Markdown；如需完整目录树，请使用“打开目录”。');
   }, []);
 
+  const loadFileUrlEntryByPath = useCallback(
+    async (
+      nextWorkspace: WorkspaceRecord,
+      nextFileHandles: Map<string, FileHandleEntry>,
+      pathSegments: string[]
+    ) => {
+      const entry = nextFileHandles.get(pathSegments.join('/'));
+      if (!entry || !('fileUrl' in entry)) {
+        setMessage('未找到该文件 URL，请重新从本地目录页打开。');
+        setStatus('error');
+        return;
+      }
+
+      try {
+        const response = await fetch(entry.fileUrl);
+        if (!response.ok) {
+          throw new Error(`读取本地 Markdown 失败：${response.status}`);
+        }
+
+        const nextMarkdown = await response.text();
+        setWorkspace(nextWorkspace);
+        setFileHandles(nextFileHandles);
+        setSelectedPath(pathSegments);
+        setMarkdown(nextMarkdown);
+        setSelectedFileMeta({ size: entry.size, lastModified: entry.lastModified });
+        setAssetResolver((previous: LocalAssetResolver | undefined) => {
+          previous?.revoke();
+          return undefined;
+        });
+        setStatus('ready');
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : '读取本地 Markdown 文件失败。');
+        setStatus('error');
+      }
+    },
+    []
+  );
+
+  const loadExtensionLaunchDirectory = useCallback(
+    async (payload: ExtensionDirectoryLaunchPayload) => {
+      const record = createWorkspaceRecord(createVirtualDirectoryHandle(payload.directoryName));
+      const { nextTree, nextHandles } = createFileUrlDirectoryState(record, payload);
+      setWorkspace(record);
+      setTree(nextTree);
+      setFileHandles(nextHandles);
+      setExpandedIds(collectDirectoryIds(nextTree));
+      setSidebarMode('files');
+      setAssetResolver((previous: LocalAssetResolver | undefined) => {
+        previous?.revoke();
+        return undefined;
+      });
+      setMessage('已从本地文件自动识别同级和子目录 Markdown；无需再次授权该目录。');
+
+      const selectedPathSegments = payload.selectedPathSegments && nextHandles.has(payload.selectedPathSegments.join('/'))
+        ? payload.selectedPathSegments
+        : findPreferredFile(nextTree)?.pathSegments;
+      if (selectedPathSegments && payload.selectedMarkdown && pathsEqual(selectedPathSegments, payload.selectedPathSegments ?? [])) {
+        const selectedEntry = nextHandles.get(selectedPathSegments.join('/'));
+        const selectedSize = new Blob([payload.selectedMarkdown]).size;
+        if (selectedEntry && 'fileUrl' in selectedEntry) {
+          nextHandles.set(selectedPathSegments.join('/'), {
+            ...selectedEntry,
+            size: selectedSize
+          });
+        }
+        setSelectedPath(selectedPathSegments);
+        setMarkdown(payload.selectedMarkdown);
+        setSelectedFileMeta({
+          size: selectedSize,
+          lastModified: selectedEntry && 'fileUrl' in selectedEntry ? selectedEntry.lastModified : payload.createdAt
+        });
+        setStatus('ready');
+      } else if (selectedPathSegments) {
+        await loadFileUrlEntryByPath(record, nextHandles, selectedPathSegments);
+      } else {
+        setSelectedPath([]);
+        setMarkdown('');
+        setSelectedFileMeta(null);
+        setStatus('ready');
+      }
+    },
+    [loadFileUrlEntryByPath]
+  );
+
   useEffect(() => {
     let cancelled = false;
 
     async function restoreLastSession() {
       const launchPayload = await consumePendingExtensionLaunch();
       if (launchPayload && !cancelled) {
-        loadExtensionLaunchFile(launchPayload);
+        if (launchPayload.type === 'file-directory') {
+          await loadExtensionLaunchDirectory(launchPayload);
+        } else {
+          loadExtensionLaunchFile(launchPayload);
+        }
+        setSessionAwaitingPermission(null);
         setRestoringSession(false);
         return;
       }
@@ -199,9 +302,17 @@ export function ReaderApp() {
       setRestoringSession(true);
       setStatus('loading');
       setMessage('正在恢复上次打开的 Markdown 阅读状态。');
-      await restoreReaderSession(session);
-      if (!cancelled) {
-        setRestoringSession(false);
+      try {
+        await restoreReaderSession(session);
+      } catch (error) {
+        if (!cancelled) {
+          setStatus('error');
+          setMessage(error instanceof Error ? error.message : '恢复上次打开的 Markdown 失败，请重新打开文件或目录。');
+        }
+      } finally {
+        if (!cancelled) {
+          setRestoringSession(false);
+        }
       }
     }
 
@@ -210,7 +321,7 @@ export function ReaderApp() {
     return () => {
       cancelled = true;
     };
-  }, [loadExtensionLaunchFile]);
+  }, [loadExtensionLaunchDirectory, loadExtensionLaunchFile]);
 
   useEffect(() => {
     if (!workspace || status !== 'ready') {
@@ -278,6 +389,12 @@ export function ReaderApp() {
       }
 
       try {
+        if ('fileUrl' in entry) {
+          const record = workspace ?? createWorkspaceRecord(createVirtualDirectoryHandle('本地目录'));
+          await loadFileUrlEntryByPath(record, fileHandles, pathSegments);
+          return;
+        }
+
         const file = await entry.handle.getFile();
         setSelectedPath(pathSegments);
         setMarkdown(await file.text());
@@ -295,8 +412,39 @@ export function ReaderApp() {
         setStatus('error');
       }
     },
-    [fileHandles]
+    [fileHandles, loadFileUrlEntryByPath, workspace]
   );
+
+  const restoreDirectorySession = useCallback(async (session: DirectoryRestoreSession) => {
+    const record = createWorkspaceRecord(session.rootHandle);
+    const { nextTree, nextHandles } = await buildTreeFromHandle(record, session.rootHandle);
+    const targetFile = nextHandles.get(session.selectedPath.join('/'));
+
+    setWorkspace(record);
+    setTree(nextTree);
+    setFileHandles(nextHandles);
+    setSelectedPath(session.selectedPath);
+
+    if (isFileSystemHandleEntry(targetFile)) {
+      const file = await targetFile.handle.getFile();
+      setMarkdown(await file.text());
+      setSelectedFileMeta({ size: file.size, lastModified: file.lastModified });
+    } else {
+      setMarkdown('');
+      setSelectedFileMeta(null);
+    }
+
+    setAssetResolver((previous: LocalAssetResolver | undefined) => {
+      previous?.revoke();
+      return createLocalAssetResolver({
+        rootHandle: session.rootHandle,
+        markdownPathSegments: session.selectedPath
+      });
+    });
+    setStatus('ready');
+    setMessage(isFileSystemHandleEntry(targetFile) ? '已恢复上次打开的目录。' : '已恢复目录，但上次文件未找到。');
+    setSessionAwaitingPermission(null);
+  }, []);
 
   const restoreReaderSession = useCallback(
     async (session: ReaderSession) => {
@@ -328,6 +476,7 @@ export function ReaderApp() {
         setSidebarCollapsed(session.sidebarCollapsed);
         setTopbarCollapsed(session.topbarCollapsed);
         setExpandedIds(new Set(session.expandedIds));
+        setSessionAwaitingPermission(null);
         return;
       }
 
@@ -337,16 +486,37 @@ export function ReaderApp() {
           if (permission === 'denied') {
             setStatus('error');
             setMessage('上次打开的文件权限已失效，请重新打开文件。');
+            setSessionAwaitingPermission(null);
             return;
           }
 
           if (permission === 'prompt') {
-            const requested = await requestWorkspacePermission(session.fileHandle);
-            if (requested !== 'granted') {
-              setStatus('error');
-              setMessage('需要重新授权后才能恢复上次打开的文件。');
-              return;
-            }
+            const pathSegments = [session.fileName];
+            const record = createWorkspaceRecord(createVirtualDirectoryHandle('当前文件'));
+            setWorkspace(record);
+            setTree(
+              createSingleFileTree(record, session.fileName, {
+                size: session.size ?? session.cachedMarkdown.length,
+                lastModified: session.lastModified ?? session.savedAt
+              })
+            );
+            setFileHandles(
+              new Map([[pathSegments.join('/'), { handle: session.fileHandle, parentHandle: record.rootHandle }]])
+            );
+            setSelectedPath(pathSegments);
+            setMarkdown(session.cachedMarkdown);
+            setSelectedFileMeta({
+              size: session.size ?? session.cachedMarkdown.length,
+              lastModified: session.lastModified ?? session.savedAt
+            });
+            setAssetResolver((previous: LocalAssetResolver | undefined) => {
+              previous?.revoke();
+              return undefined;
+            });
+            setStatus('ready');
+            setMessage('已恢复上次打开的 Markdown 缓存；如需读取最新内容，请重新打开文件。');
+            setSessionAwaitingPermission(null);
+            return;
           }
         }
 
@@ -377,6 +547,7 @@ export function ReaderApp() {
         });
         setStatus('ready');
         setMessage('已恢复上次打开的 Markdown 文件。');
+        setSessionAwaitingPermission(null);
         return;
       }
 
@@ -384,45 +555,47 @@ export function ReaderApp() {
       if (permission === 'denied') {
         setStatus('error');
         setMessage('上次打开的目录权限已失效，请重新打开目录。');
+        setSessionAwaitingPermission(null);
         return;
       }
 
       if (permission === 'prompt') {
-        const requested = await requestWorkspacePermission(session.rootHandle);
-        if (requested !== 'granted') {
-          setStatus('error');
-          setMessage('需要重新授权后才能恢复上次打开的目录。');
-          return;
-        }
+        setSessionAwaitingPermission(session);
+        setStatus('idle');
+        setMessage('需要授权后才能恢复上次打开的目录。');
+        return;
       }
 
-      const record = createWorkspaceRecord(session.rootHandle);
-      const { nextTree, nextHandles } = await buildTreeFromHandle(record, session.rootHandle);
-      const targetFile = nextHandles.get(session.selectedPath.join('/'));
-      setWorkspace(record);
-      setTree(nextTree);
-      setFileHandles(nextHandles);
-      setSelectedPath(session.selectedPath);
-      if (targetFile) {
-        const file = await targetFile.handle.getFile();
-        setMarkdown(await file.text());
-        setSelectedFileMeta({ size: file.size, lastModified: file.lastModified });
-      } else {
-        setMarkdown('');
-        setSelectedFileMeta(null);
-      }
-      setAssetResolver((previous: LocalAssetResolver | undefined) => {
-        previous?.revoke();
-        return createLocalAssetResolver({
-          rootHandle: session.rootHandle,
-          markdownPathSegments: session.selectedPath
-        });
-      });
-      setStatus('ready');
-      setMessage(targetFile ? '已恢复上次打开的目录。' : '已恢复目录，但上次文件未找到。');
+      await restoreDirectorySession(session);
     },
-    []
+    [restoreDirectorySession]
   );
+
+  const continueSessionRestore = useCallback(async () => {
+    if (!sessionAwaitingPermission) {
+      return;
+    }
+
+    setRestoringSession(true);
+    setStatus('loading');
+    setMessage('正在请求目录权限...');
+
+    try {
+      const requested = await requestWorkspacePermission(sessionAwaitingPermission.rootHandle);
+      if (requested !== 'granted') {
+        setStatus('error');
+        setMessage('目录读取权限未授予。');
+        return;
+      }
+
+      await restoreDirectorySession(sessionAwaitingPermission);
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : '恢复上次打开的目录失败。');
+    } finally {
+      setRestoringSession(false);
+    }
+  }, [restoreDirectorySession, sessionAwaitingPermission]);
 
   const openDirectory = useCallback(async () => {
     const previousStatus = status;
@@ -430,6 +603,7 @@ export function ReaderApp() {
     try {
       setStatus('loading');
       setMessage('正在请求目录权限...');
+      setSessionAwaitingPermission(null);
       const rootHandle = await pickWorkspaceDirectory();
 
       if (!rootHandle) {
@@ -459,7 +633,7 @@ export function ReaderApp() {
         expandPath(record.id, getParentSegments(firstFile.pathSegments));
         const file = nextHandles.get(firstFile.pathSegments.join('/'));
         setSelectedPath(firstFile.pathSegments);
-        if (file) {
+        if (isFileSystemHandleEntry(file)) {
           const markdownFile = await file.handle.getFile();
           setMarkdown(await markdownFile.text());
           setSelectedFileMeta({ size: markdownFile.size, lastModified: markdownFile.lastModified });
@@ -488,6 +662,7 @@ export function ReaderApp() {
       setStatus('loading');
       setMessage('正在选择 Markdown 文件...');
       const fileHandle = await pickMarkdownFile();
+      setSessionAwaitingPermission(null);
 
       if (!fileHandle) {
         setStatus(previousStatus);
@@ -520,6 +695,7 @@ export function ReaderApp() {
 
   const loadSample = useCallback(() => {
     const sampleState = createSampleWorkspaceState();
+    setSessionAwaitingPermission(null);
     setWorkspace(sampleState.record);
     setTree(sampleState.tree);
     setFileHandles(sampleState.fileHandles);
@@ -587,7 +763,7 @@ export function ReaderApp() {
 
       if (selectedStillExists) {
         const selectedEntry = nextHandles.get(selectedKey);
-        if (selectedEntry) {
+        if (isFileSystemHandleEntry(selectedEntry)) {
           const file = await selectedEntry.handle.getFile();
           setMarkdown(await file.text());
           setSelectedFileMeta({ size: file.size, lastModified: file.lastModified });
@@ -806,6 +982,15 @@ export function ReaderApp() {
           <div className={`notice ${status === 'error' ? 'notice-error' : ''}`} role="status">
             <AlertCircle size={16} aria-hidden />
             <span>{message}</span>
+            {sessionAwaitingPermission ? (
+              <button
+                type="button"
+                className="notice-action-button"
+                onClick={continueSessionRestore}
+              >
+                继续恢复上次目录
+              </button>
+            ) : null}
             <button
               type="button"
               className="notice-close-button"
@@ -993,6 +1178,133 @@ function createSingleFileTree(
   };
 }
 
+function createFileUrlDirectoryState(
+  workspace: WorkspaceRecord,
+  payload: ExtensionDirectoryLaunchPayload
+): {
+  nextTree: MarkdownTreeNode;
+  nextHandles: Map<string, FileHandleEntry>;
+} {
+  const now = payload.createdAt;
+  const nextHandles = new Map<string, FileHandleEntry>();
+  const root: Extract<MarkdownTreeNode, { kind: 'directory' }> = {
+    kind: 'directory',
+    id: pathSegmentsToId(workspace.id, []),
+    name: payload.directoryName,
+    pathSegments: [],
+    children: [],
+    markdownCount: 0
+  };
+
+  for (const entry of payload.entries) {
+    const pathSegments = normalizeFileUrlEntryPath(entry);
+    if (pathSegments.length === 0) {
+      continue;
+    }
+
+    nextHandles.set(pathSegments.join('/'), {
+      fileUrl: entry.fileUrl,
+      size: 0,
+      lastModified: now
+    });
+
+    insertFileUrlTreeNode(root, workspace.id, pathSegments, now);
+  }
+
+  sortVirtualTree(root);
+  root.markdownCount = countMarkdownTreeFiles(root);
+
+  return {
+    nextTree: root,
+    nextHandles
+  };
+}
+
+function normalizeFileUrlEntryPath(entry: ExtensionDirectoryLaunchPayload['entries'][number]): string[] {
+  if (entry.pathSegments && entry.pathSegments.length > 0) {
+    return entry.pathSegments;
+  }
+
+  return [entry.name];
+}
+
+function insertFileUrlTreeNode(
+  root: Extract<MarkdownTreeNode, { kind: 'directory' }>,
+  workspaceId: string,
+  pathSegments: string[],
+  lastModified: number
+) {
+  let current = root;
+
+  for (let index = 0; index < pathSegments.length - 1; index += 1) {
+    const directoryPath = pathSegments.slice(0, index + 1);
+    const directoryName = pathSegments[index];
+    let nextDirectory = current.children.find((child): child is Extract<MarkdownTreeNode, { kind: 'directory' }> => {
+      return child.kind === 'directory' && child.name === directoryName;
+    });
+
+    if (!nextDirectory) {
+      nextDirectory = {
+        kind: 'directory',
+        id: pathSegmentsToId(workspaceId, directoryPath),
+        name: directoryName,
+        pathSegments: directoryPath,
+        children: [],
+        markdownCount: 0
+      };
+      current.children.push(nextDirectory);
+    }
+
+    current = nextDirectory;
+  }
+
+  const fileName = pathSegments.at(-1);
+  if (!fileName) {
+    return;
+  }
+
+  current.children.push({
+    kind: 'file',
+    id: pathSegmentsToId(workspaceId, pathSegments),
+    name: fileName,
+    pathSegments,
+    size: 0,
+    lastModified
+  });
+}
+
+function sortVirtualTree(node: MarkdownTreeNode) {
+  if (node.kind !== 'directory') {
+    return;
+  }
+
+  node.children.sort(compareTreeNodes);
+  node.children.forEach(sortVirtualTree);
+}
+
+function countMarkdownTreeFiles(node: MarkdownTreeNode): number {
+  if (node.kind === 'file') {
+    return 1;
+  }
+
+  const count = node.children.reduce((total, child) => total + countMarkdownTreeFiles(child), 0);
+  node.markdownCount = count;
+  return count;
+}
+
+const treeNodeCollator = new Intl.Collator('zh-CN', {
+  numeric: true,
+  sensitivity: 'base'
+});
+
+function compareTreeNodes(left: MarkdownTreeNode, right: MarkdownTreeNode): number {
+  if (left.kind !== right.kind) {
+    return left.kind === 'directory' ? -1 : 1;
+  }
+
+  return treeNodeCollator.compare(left.name, right.name);
+}
+
 function createSampleWorkspaceState(): {
   record: WorkspaceRecord;
   tree: MarkdownTreeNode;
@@ -1010,6 +1322,10 @@ function createSampleWorkspaceState(): {
     selectedPath: ['README.md'],
     markdown: sampleMarkdownByPath.get('README.md') ?? ''
   };
+}
+
+function isFileSystemHandleEntry(entry: FileHandleEntry | undefined): entry is FileSystemHandleEntry {
+  return Boolean(entry && 'handle' in entry);
 }
 
 function createCurrentReaderSession({
@@ -1051,7 +1367,8 @@ function createCurrentReaderSession({
   }
 
   if (workspace.name === '当前文件') {
-    const selectedHandle = fileHandles.get(selectedPath.join('/'))?.handle;
+    const selectedEntry = fileHandles.get(selectedPath.join('/'));
+    const selectedHandle = isFileSystemHandleEntry(selectedEntry) ? selectedEntry.handle : undefined;
     if (!selectedHandle && !markdown.trim()) {
       return null;
     }
@@ -1065,6 +1382,10 @@ function createCurrentReaderSession({
       size: selectedFileMeta?.size,
       lastModified: selectedFileMeta?.lastModified
     };
+  }
+
+  if (Array.from(fileHandles.values()).some((entry) => 'fileUrl' in entry)) {
+    return null;
   }
 
   return {
@@ -1164,7 +1485,8 @@ function useResolvedTheme(theme: ReaderTheme): 'light' | 'dark' {
 
 async function consumePendingExtensionLaunch() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('launch') !== 'file-url') {
+  const launchType = params.get('launch');
+  if (launchType !== 'file-url' && launchType !== 'file-directory') {
     return null;
   }
 
@@ -1224,6 +1546,10 @@ function collectDirectoryIds(tree: MarkdownTreeNode): Set<string> {
 
   collect(tree);
   return ids;
+}
+
+function pathsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((segment, index) => segment === right[index]);
 }
 
 function markActiveOutlineRow(id: string) {
