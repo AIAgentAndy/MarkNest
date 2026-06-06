@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReaderApp } from '@/features/workspace/components/reader-app';
+import type * as WorkspaceAdapter from '@/features/workspace/lib/workspace-adapter';
 
 const workspaceMocks = vi.hoisted(() => ({
   getWorkspacePermission: vi.fn(),
@@ -13,7 +14,7 @@ const workspaceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/workspace/lib/workspace-adapter', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/workspace/lib/workspace-adapter')>();
+  const actual = await importOriginal<typeof WorkspaceAdapter>();
 
   return {
     ...actual,
@@ -113,6 +114,102 @@ describe('ReaderApp session restore', () => {
     expect(screen.getByText('已恢复上次打开的 Markdown 缓存；如需读取最新内容，请重新打开文件。')).toBeInTheDocument();
     expect(workspaceMocks.requestWorkspacePermission).not.toHaveBeenCalled();
     expect(fileHandle.getFile).not.toHaveBeenCalled();
+  });
+
+  it('刷新后恢复 file URL 虚拟目录和当前选中文件', async () => {
+    const launchGet = vi.fn().mockResolvedValue({
+      'marknest-launch:launch-dir-1': {
+        type: 'file-directory',
+        directoryName: 'docs',
+        directoryUrl: 'file:///Users/example/docs/',
+        selectedPathSegments: ['sub', 'guide.md'],
+        selectedMarkdown: '# Guide\n\n正文',
+        entries: [
+          {
+            name: 'README.md',
+            fileUrl: 'file:///Users/example/docs/README.md',
+            pathSegments: ['README.md']
+          },
+          {
+            name: 'guide.md',
+            fileUrl: 'file:///Users/example/docs/sub/guide.md',
+            pathSegments: ['sub', 'guide.md']
+          }
+        ],
+        createdAt: 1777651200000
+      }
+    });
+    const launchRemove = vi.fn().mockResolvedValue(undefined);
+    const savedSessions: unknown[] = [];
+    workspaceMocks.saveReaderSession.mockImplementation(async (session: unknown) => {
+      savedSessions.push(session);
+    });
+    vi.stubGlobal('chrome', {
+      storage: {
+        session: {
+          get: launchGet,
+          remove: launchRemove
+        }
+      }
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const markdownByUrl = new Map([
+          ['file:///Users/example/docs/README.md', '# README\n\n首页'],
+          ['file:///Users/example/docs/sub/guide.md', '# Guide\n\n正文']
+        ]);
+        return new Response(markdownByUrl.get(url) ?? '', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/markdown'
+          }
+        });
+      })
+    );
+    window.history.pushState(null, '', '/?launch=file-directory&id=launch-dir-1');
+
+    const firstRender = render(<ReaderApp />);
+    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /guide\.md/ })).toHaveAttribute('aria-current', 'page');
+
+    await waitFor(() => {
+      expect(savedSessions.at(-1)).toMatchObject({
+        mode: 'file-url-directory',
+        workspaceName: 'docs',
+        directoryUrl: 'file:///Users/example/docs/',
+        selectedPath: ['sub', 'guide.md'],
+        cachedMarkdown: '# Guide\n\n正文',
+        entries: [
+          {
+            name: 'README.md',
+            fileUrl: 'file:///Users/example/docs/README.md',
+            pathSegments: ['README.md']
+          },
+          {
+            name: 'guide.md',
+            fileUrl: 'file:///Users/example/docs/sub/guide.md',
+            pathSegments: ['sub', 'guide.md']
+          }
+        ]
+      });
+    });
+
+    const savedSession = savedSessions.at(-1);
+    firstRender.unmount();
+    window.history.replaceState(null, '', '/');
+    delete (globalThis as { chrome?: unknown }).chrome;
+    workspaceMocks.loadReaderSession.mockResolvedValue(savedSession);
+    workspaceMocks.saveReaderSession.mockClear();
+
+    render(<ReaderApp />);
+
+    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeInTheDocument();
+    expect(screen.getByText('正文')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /guide\.md/ })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('已恢复本地文件目录阅读状态。')).toBeInTheDocument();
   });
 });
 

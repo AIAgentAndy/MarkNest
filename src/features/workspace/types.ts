@@ -42,6 +42,23 @@ export type FileReaderSession = ReaderSessionBase & {
   lastModified?: number;
 };
 
+export type FileUrlDirectoryReaderSessionEntry = {
+  name: string;
+  fileUrl: string;
+  pathSegments: string[];
+  size?: number;
+  lastModified?: number;
+};
+
+export type FileUrlDirectoryReaderSession = ReaderSessionBase & {
+  mode: 'file-url-directory';
+  directoryUrl: string;
+  entries: FileUrlDirectoryReaderSessionEntry[];
+  cachedMarkdown: string;
+  size?: number;
+  lastModified?: number;
+};
+
 export type SampleReaderSession = ReaderSessionBase & {
   mode: 'sample';
 };
@@ -49,4 +66,5 @@ export type SampleReaderSession = ReaderSessionBase & {
 export type ReaderSession =
   | DirectoryReaderSession
   | FileReaderSession
+  | FileUrlDirectoryReaderSession
   | SampleReaderSession;

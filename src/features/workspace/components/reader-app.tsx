@@ -62,6 +62,13 @@ type FileUrlHandleEntry = {
 };
 
 type FileHandleEntry = FileSystemHandleEntry | FileUrlHandleEntry;
+type FileUrlDirectoryStateEntry = ExtensionDirectoryLaunchPayload['entries'][number] & {
+  size?: number;
+  lastModified?: number;
+};
+type FileUrlDirectoryStatePayload = Omit<ExtensionDirectoryLaunchPayload, 'entries'> & {
+  entries: FileUrlDirectoryStateEntry[];
+};
 
 type ReaderStatus = 'idle' | 'loading' | 'ready' | 'error';
 type DirectoryRestoreSession = Extract<ReaderSession, { mode: 'directory' }>;
@@ -80,6 +87,7 @@ export function ReaderApp() {
   const [markdown, setMarkdown] = useState('');
   const [selectedFileMeta, setSelectedFileMeta] = useState<{ size: number; lastModified: number } | null>(null);
   const [fileHandles, setFileHandles] = useState<Map<string, FileHandleEntry>>(new Map());
+  const [fileUrlDirectoryUrl, setFileUrlDirectoryUrl] = useState<string | null>(null);
   const [assetResolver, setAssetResolver] = useState<LocalAssetResolver | undefined>();
   const [status, setStatus] = useState<ReaderStatus>('idle');
   const [message, setMessage] = useState('');
@@ -174,6 +182,7 @@ export function ReaderApp() {
       })
     );
     setFileHandles(new Map());
+    setFileUrlDirectoryUrl(null);
     setExpandedIds(new Set([pathSegmentsToId(record.id, [])]));
     setSelectedPath(pathSegments);
     setMarkdown(payload.markdown);
@@ -191,12 +200,12 @@ export function ReaderApp() {
       nextWorkspace: WorkspaceRecord,
       nextFileHandles: Map<string, FileHandleEntry>,
       pathSegments: string[]
-    ) => {
+    ): Promise<boolean> => {
       const entry = nextFileHandles.get(pathSegments.join('/'));
       if (!entry || !('fileUrl' in entry)) {
         setMessage('未找到该文件 URL，请重新从本地目录页打开。');
         setStatus('error');
-        return;
+        return false;
       }
 
       try {
@@ -216,9 +225,11 @@ export function ReaderApp() {
           return undefined;
         });
         setStatus('ready');
+        return true;
       } catch (error) {
         setMessage(error instanceof Error ? error.message : '读取本地 Markdown 文件失败。');
         setStatus('error');
+        return false;
       }
     },
     []
@@ -231,6 +242,7 @@ export function ReaderApp() {
       setWorkspace(record);
       setTree(nextTree);
       setFileHandles(nextHandles);
+      setFileUrlDirectoryUrl(payload.directoryUrl);
       setExpandedIds(collectDirectoryIds(nextTree));
       setSidebarMode('files');
       setAssetResolver((previous: LocalAssetResolver | undefined) => {
@@ -337,7 +349,8 @@ export function ReaderApp() {
       topbarCollapsed,
       fileHandles,
       markdown,
-      selectedFileMeta
+      selectedFileMeta,
+      fileUrlDirectoryUrl
     });
 
     if (session) {
@@ -346,6 +359,7 @@ export function ReaderApp() {
   }, [
     expandedIds,
     fileHandles,
+    fileUrlDirectoryUrl,
     markdown,
     selectedPath,
     selectedFileMeta,
@@ -423,6 +437,7 @@ export function ReaderApp() {
     setWorkspace(record);
     setTree(nextTree);
     setFileHandles(nextHandles);
+    setFileUrlDirectoryUrl(null);
     setSelectedPath(session.selectedPath);
 
     if (isFileSystemHandleEntry(targetFile)) {
@@ -462,6 +477,7 @@ export function ReaderApp() {
         setWorkspace(sampleState.record);
         setTree(sampleState.tree);
         setFileHandles(sampleState.fileHandles);
+        setFileUrlDirectoryUrl(null);
         setExpandedIds(sampleState.expandedIds);
         setSelectedPath(selectedSamplePath);
         setMarkdown(sampleMarkdownByPath.get(selectedSamplePath.join('/')) ?? sampleState.markdown);
@@ -476,6 +492,66 @@ export function ReaderApp() {
         setSidebarCollapsed(session.sidebarCollapsed);
         setTopbarCollapsed(session.topbarCollapsed);
         setExpandedIds(new Set(session.expandedIds));
+        setSessionAwaitingPermission(null);
+        return;
+      }
+
+      if (session.mode === 'file-url-directory') {
+        const record = createWorkspaceRecord(createVirtualDirectoryHandle(session.workspaceName));
+        const { nextTree, nextHandles } = createFileUrlDirectoryState(record, {
+          type: 'file-directory',
+          directoryName: session.workspaceName,
+          directoryUrl: session.directoryUrl,
+          entries: session.entries,
+          selectedPathSegments: session.selectedPath,
+          selectedMarkdown: session.cachedMarkdown,
+          createdAt: session.savedAt
+        });
+        const selectedPathSegments = session.selectedPath.length > 0 && nextHandles.has(session.selectedPath.join('/'))
+          ? session.selectedPath
+          : findPreferredFile(nextTree)?.pathSegments;
+
+        setWorkspace(record);
+        setTree(nextTree);
+        setFileHandles(nextHandles);
+        setFileUrlDirectoryUrl(session.directoryUrl);
+        setExpandedIds(session.expandedIds.length > 0 ? new Set(session.expandedIds) : collectDirectoryIds(nextTree));
+        setAssetResolver((previous: LocalAssetResolver | undefined) => {
+          previous?.revoke();
+          return undefined;
+        });
+
+        if (!selectedPathSegments) {
+          setSelectedPath([]);
+          setMarkdown('');
+          setSelectedFileMeta(null);
+          setStatus('ready');
+          setMessage('已恢复本地文件目录，但目录内没有可阅读的 Markdown。');
+          setSessionAwaitingPermission(null);
+          return;
+        }
+
+        if (pathsEqual(selectedPathSegments, session.selectedPath)) {
+          const selectedEntry = nextHandles.get(selectedPathSegments.join('/'));
+          const cachedSize = new Blob([session.cachedMarkdown]).size;
+          setSelectedPath(selectedPathSegments);
+          setMarkdown(session.cachedMarkdown);
+          setSelectedFileMeta({
+            size: session.size ?? (selectedEntry && 'fileUrl' in selectedEntry ? selectedEntry.size : cachedSize),
+            lastModified: session.lastModified ?? (
+              selectedEntry && 'fileUrl' in selectedEntry ? selectedEntry.lastModified : session.savedAt
+            )
+          });
+          setStatus('ready');
+          setMessage('已恢复本地文件目录阅读状态。');
+          setSessionAwaitingPermission(null);
+          return;
+        }
+
+        const restored = await loadFileUrlEntryByPath(record, nextHandles, selectedPathSegments);
+        if (restored) {
+          setMessage('已恢复本地文件目录阅读状态。');
+        }
         setSessionAwaitingPermission(null);
         return;
       }
@@ -503,6 +579,7 @@ export function ReaderApp() {
             setFileHandles(
               new Map([[pathSegments.join('/'), { handle: session.fileHandle, parentHandle: record.rootHandle }]])
             );
+            setFileUrlDirectoryUrl(null);
             setSelectedPath(pathSegments);
             setMarkdown(session.cachedMarkdown);
             setSelectedFileMeta({
@@ -535,6 +612,7 @@ export function ReaderApp() {
             ? new Map([[pathSegments.join('/'), { handle: session.fileHandle, parentHandle: record.rootHandle }]])
             : new Map()
         );
+        setFileUrlDirectoryUrl(null);
         setSelectedPath(pathSegments);
         setMarkdown(file ? await file.text() : session.cachedMarkdown);
         setSelectedFileMeta({
@@ -568,7 +646,7 @@ export function ReaderApp() {
 
       await restoreDirectorySession(session);
     },
-    [restoreDirectorySession]
+    [loadFileUrlEntryByPath, restoreDirectorySession]
   );
 
   const continueSessionRestore = useCallback(async () => {
@@ -624,6 +702,7 @@ export function ReaderApp() {
       setWorkspace(record);
       setTree(nextTree);
       setFileHandles(nextHandles);
+      setFileUrlDirectoryUrl(null);
       setStatus('ready');
       setMessage('');
       expandPath(record.id, []);
@@ -677,6 +756,7 @@ export function ReaderApp() {
       setWorkspace(record);
       setTree(createSingleFileTree(record, fileHandle.name, file));
       setFileHandles(new Map([[pathSegments.join('/'), { handle: fileHandle, parentHandle: record.rootHandle }]]));
+      setFileUrlDirectoryUrl(null);
       setExpandedIds(new Set([pathSegmentsToId(record.id, [])]));
       setSelectedPath(pathSegments);
       setMarkdown(await file.text());
@@ -699,6 +779,7 @@ export function ReaderApp() {
     setWorkspace(sampleState.record);
     setTree(sampleState.tree);
     setFileHandles(sampleState.fileHandles);
+    setFileUrlDirectoryUrl(null);
     setExpandedIds(sampleState.expandedIds);
     setSelectedPath(sampleState.selectedPath);
     setMarkdown(sampleState.markdown);
@@ -1180,7 +1261,7 @@ function createSingleFileTree(
 
 function createFileUrlDirectoryState(
   workspace: WorkspaceRecord,
-  payload: ExtensionDirectoryLaunchPayload
+  payload: FileUrlDirectoryStatePayload
 ): {
   nextTree: MarkdownTreeNode;
   nextHandles: Map<string, FileHandleEntry>;
@@ -1204,11 +1285,14 @@ function createFileUrlDirectoryState(
 
     nextHandles.set(pathSegments.join('/'), {
       fileUrl: entry.fileUrl,
-      size: 0,
-      lastModified: now
+      size: entry.size ?? 0,
+      lastModified: entry.lastModified ?? now
     });
 
-    insertFileUrlTreeNode(root, workspace.id, pathSegments, now);
+    insertFileUrlTreeNode(root, workspace.id, pathSegments, {
+      size: entry.size ?? 0,
+      lastModified: entry.lastModified ?? now
+    });
   }
 
   sortVirtualTree(root);
@@ -1220,7 +1304,7 @@ function createFileUrlDirectoryState(
   };
 }
 
-function normalizeFileUrlEntryPath(entry: ExtensionDirectoryLaunchPayload['entries'][number]): string[] {
+function normalizeFileUrlEntryPath(entry: FileUrlDirectoryStateEntry): string[] {
   if (entry.pathSegments && entry.pathSegments.length > 0) {
     return entry.pathSegments;
   }
@@ -1232,7 +1316,7 @@ function insertFileUrlTreeNode(
   root: Extract<MarkdownTreeNode, { kind: 'directory' }>,
   workspaceId: string,
   pathSegments: string[],
-  lastModified: number
+  fileMeta: { size: number; lastModified: number }
 ) {
   let current = root;
 
@@ -1268,8 +1352,8 @@ function insertFileUrlTreeNode(
     id: pathSegmentsToId(workspaceId, pathSegments),
     name: fileName,
     pathSegments,
-    size: 0,
-    lastModified
+    size: fileMeta.size,
+    lastModified: fileMeta.lastModified
   });
 }
 
@@ -1337,7 +1421,8 @@ function createCurrentReaderSession({
   topbarCollapsed,
   fileHandles,
   markdown,
-  selectedFileMeta
+  selectedFileMeta,
+  fileUrlDirectoryUrl
 }: {
   workspace: WorkspaceRecord;
   selectedPath: string[];
@@ -1348,6 +1433,7 @@ function createCurrentReaderSession({
   fileHandles: Map<string, FileHandleEntry>;
   markdown: string;
   selectedFileMeta: { size: number; lastModified: number } | null;
+  fileUrlDirectoryUrl: string | null;
 }): ReaderSession | null {
   const base = {
     workspaceName: workspace.name,
@@ -1384,8 +1470,32 @@ function createCurrentReaderSession({
     };
   }
 
-  if (Array.from(fileHandles.values()).some((entry) => 'fileUrl' in entry)) {
-    return null;
+  const fileUrlEntries = Array.from(fileHandles.entries()).filter((entry): entry is [string, FileUrlHandleEntry] => {
+    return 'fileUrl' in entry[1];
+  });
+  if (fileUrlEntries.length > 0) {
+    if (!fileUrlDirectoryUrl) {
+      return null;
+    }
+
+    return {
+      ...base,
+      mode: 'file-url-directory',
+      directoryUrl: fileUrlDirectoryUrl,
+      entries: fileUrlEntries.map(([pathKey, entry]) => {
+        const pathSegments = pathKey.split('/').filter(Boolean);
+        return {
+          name: pathSegments.at(-1) ?? '未命名.md',
+          fileUrl: entry.fileUrl,
+          pathSegments,
+          size: entry.size,
+          lastModified: entry.lastModified
+        };
+      }),
+      cachedMarkdown: markdown,
+      size: selectedFileMeta?.size,
+      lastModified: selectedFileMeta?.lastModified
+    };
   }
 
   return {

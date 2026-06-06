@@ -132,6 +132,60 @@ describe('workspace-adapter', () => {
     expect(restored?.mode === 'file' ? restored.fileHandle : null).toBeFalsy();
   });
 
+  it('保存并读取 file URL 虚拟目录阅读会话', async () => {
+    await saveReaderSession({
+      mode: 'file-url-directory',
+      workspaceName: 'docs',
+      selectedPath: ['sub', 'guide.md'],
+      expandedIds: ['workspace:docs', 'workspace:docs/sub'],
+      sidebarMode: 'files',
+      sidebarCollapsed: false,
+      topbarCollapsed: true,
+      savedAt: 100,
+      directoryUrl: 'file:///Users/example/docs/',
+      cachedMarkdown: '# Guide\n\n正文',
+      size: 12,
+      lastModified: 90,
+      entries: [
+        {
+          name: 'README.md',
+          fileUrl: 'file:///Users/example/docs/README.md',
+          pathSegments: ['README.md'],
+          size: 10,
+          lastModified: 80
+        },
+        {
+          name: 'guide.md',
+          fileUrl: 'file:///Users/example/docs/sub/guide.md',
+          pathSegments: ['sub', 'guide.md'],
+          size: 12,
+          lastModified: 90
+        }
+      ]
+    });
+
+    await expect(loadReaderSession()).resolves.toMatchObject({
+      mode: 'file-url-directory',
+      workspaceName: 'docs',
+      selectedPath: ['sub', 'guide.md'],
+      expandedIds: ['workspace:docs', 'workspace:docs/sub'],
+      directoryUrl: 'file:///Users/example/docs/',
+      cachedMarkdown: '# Guide\n\n正文',
+      entries: [
+        {
+          name: 'README.md',
+          fileUrl: 'file:///Users/example/docs/README.md',
+          pathSegments: ['README.md']
+        },
+        {
+          name: 'guide.md',
+          fileUrl: 'file:///Users/example/docs/sub/guide.md',
+          pathSegments: ['sub', 'guide.md']
+        }
+      ]
+    });
+  });
+
   it('目录句柄无法持久化时清除最近阅读会话且不抛出未处理错误', async () => {
     await saveReaderSession({
       mode: 'file',
