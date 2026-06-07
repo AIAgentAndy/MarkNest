@@ -305,7 +305,7 @@ describe('ReaderApp about panel', () => {
       });
 
       fireEvent.click(screen.getByRole('tab', { name: '显示文档大纲' }));
-      fireEvent.click(screen.getByRole('button', { name: '核心流程' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Mermaid 流程图' }));
 
       expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }));
       expect(scrollIntoView).not.toHaveBeenCalled();

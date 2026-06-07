@@ -2,7 +2,7 @@
 
 让 Markdown 文档优雅归巢，在 Chrome 中沉浸阅读本地文档。
 
-MarkNest 是一个本地优先的 Markdown 文档阅读工作区。它以 Chrome Manifest V3 扩展的形式运行，用户主动选择本地 Markdown 文件或目录后，MarkNest 会在浏览器内渲染文档、展示目录树和文档大纲，并支持 Mermaid 图表、数学公式、GFM 表格和暗色模式。
+MarkNest 是一个本地优先的 Markdown 文档阅读工作区。它以 Chrome Manifest V3 扩展的形式运行，打开 `file://` Markdown 文件或本地目录页后，MarkNest 会直接在原始本地地址内渲染文档、展示目录树和文档大纲，并支持 Mermaid 图表、数学公式、GFM 表格和暗色模式。
 
 ## 产品预览
 
@@ -27,14 +27,14 @@ MarkNest 不是 Markdown 编辑器，也不是云端同步工具。它更像一�
 
 ## 功能特性
 
-- 打开本地目录并扫描 Markdown 文件树。
-- 打开单个 Markdown 文件并立即渲染。
-- 支持目录/大纲切换、侧栏折叠、顶部操作区折叠。
+- 在 `file://.../*.md` 页面内直接渲染本地 Markdown，地址栏保留原始文件路径。
+- 自动识别当前文件同级目录和子目录中的 Markdown 文件树。
+- 支持目录/大纲切换、侧栏折叠、右上角沉浸式控制菜单。
 - 支持 GFM 表格、任务列表、标题锚点、代码高亮、KaTeX 数学公式。
 - 支持 Mermaid 图表渲染、横向滚动、全屏查看和缩放。
 - 支持本地图片路径重写，方便阅读包含相对路径图片的文档。
 - 支持亮色、暗色和跟随系统主题。
-- 使用 IndexedDB / chrome.storage 保存主题、阅读状态和最近会话。
+- 使用浏览器本地能力读取文件，不上传文档内容。
 
 ## 技术栈
 
@@ -141,9 +141,10 @@ dist/extension
 3. 打开右上角“开发者模式”。
 4. 点击“加载已解压的扩展程序”。
 5. 选择本项目的 `dist/extension` 目录。
-6. 点击浏览器工具栏里的 MarkNest 图标打开扩展。
+6. 进入扩展详情页，开启“允许访问文件网址”。
+7. 在 Chrome 中直接打开本地 Markdown，例如 `file:///Users/andy/Documents/demo.md`；也可以打开在线 Markdown 原始地址，例如 `https://example.com/docs/guide.md`。
 
-如果希望从 `file://` 的 Markdown 文件页面触发扩展，需要在扩展详情页中手动开启“允许访问文件网址”。
+扩展工具栏图标打开 MarkNest 使用引导页，不再提供文件选择器。本地 Markdown 通过 Chrome 直接打开后会保留 `file:///...` 地址；开启“允许访问文件网址”后，扩展会在浏览器本地识别同级和子目录中的 Markdown。在线 Markdown 只渲染当前文件，不扫描远程目录。阅读页右上角默认只有一个菜单图标，点击后可切换原始内容、全屏、打印、亮色/暗色、反馈和关于。
 
 
 ## 目录结构
@@ -154,13 +155,13 @@ src/
 ├── features/
 │   ├── file-tree/             Markdown 文件树扫描与 UI
 │   ├── markdown-renderer/     Markdown 渲染管线与阅读组件
-│   └── workspace/             工作区授权、主界面和示例数据
+│   └── workspace/             file:// 直渲染宿主、工作区授权和示例数据
 └── shared/
     ├── browser/               浏览器 API 类型
     ├── db/                    IndexedDB 持久化
     └── path/                  路径与扩展名工具
 
-extension/                     Chrome MV3 manifest、后台脚本和图标
+extension/                     Chrome MV3 manifest、后台脚本、直渲染工具和图标
 scripts/                       构建扩展与生成图标脚本
 tests/                         单元、组件和 e2e 测试
 ```

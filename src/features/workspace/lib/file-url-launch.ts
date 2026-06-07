@@ -1,86 +1,10 @@
-/// <reference types="chrome" />
+import { isMarkdownFileName } from '@/shared/path/path-utils';
 
-if (typeof chrome !== 'undefined') {
-  chrome.action.onClicked.addListener(() => {
-    void handleExtensionActionClick();
-  });
-
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    return handleExtensionMessage(message, sendResponse);
-  });
-}
-
-export async function handleExtensionActionClick(): Promise<void> {
-  await chrome.tabs.create({
-    url: chrome.runtime.getURL('support.html')
-  });
-}
-
-export function handleExtensionMessage(
-  message: unknown,
-  sendResponse: (response: FileUrlBackgroundResponse) => void = () => {}
-): boolean {
-  if (isOpenExtensionDetailsRequest(message)) {
-    void openExtensionDetailsPage();
-    return false;
-  }
-
-  if (isReadMarkdownRequest(message)) {
-    void readMarkdownPayload(message.fileUrl).then(sendResponse);
-    return true;
-  }
-
-  if (isReadDirectoryRequest(message)) {
-    void readDirectoryPayload(message.directoryUrl).then(sendResponse);
-    return true;
-  }
-
-  if (isReadTextRequest(message)) {
-    void readMarkdownText(message.fileUrl).then(sendResponse);
-    return true;
-  }
-
-  return false;
-}
-
-type ReadMarkdownRequest = {
-  type: 'MARKNEST_READ_FILE_URL_MARKDOWN';
-  fileUrl: string;
-};
-
-type ReadDirectoryRequest = {
-  type: 'MARKNEST_READ_FILE_URL_DIRECTORY';
-  directoryUrl: string;
-};
-
-type ReadTextRequest = {
-  type: 'MARKNEST_READ_FILE_URL_TEXT';
-  fileUrl: string;
-};
-
-type OpenExtensionDetailsRequest = {
-  type: 'MARKNEST_OPEN_EXTENSION_DETAILS';
-};
-
-type FileUrlBackgroundResponse =
-  | {
-      ok: true;
-      payload: FileUrlLaunchPayload;
-    }
-  | {
-      ok: true;
-      markdown: string;
-    }
-  | {
-      ok: false;
-      error: string;
-    };
-
-type FileUrlLaunchPayload =
+export type FileUrlLaunchPayload =
   | FileUrlFileLaunchPayload
   | FileUrlDirectoryLaunchPayload;
 
-type FileUrlFileLaunchPayload = {
+export type FileUrlFileLaunchPayload = {
   type: 'file-url';
   fileName: string;
   fileUrl: string;
@@ -88,7 +12,7 @@ type FileUrlFileLaunchPayload = {
   createdAt: number;
 };
 
-type FileUrlDirectoryLaunchPayload = {
+export type FileUrlDirectoryLaunchPayload = {
   type: 'file-directory';
   directoryName: string;
   directoryUrl: string;
@@ -98,7 +22,7 @@ type FileUrlDirectoryLaunchPayload = {
   createdAt: number;
 };
 
-type FileUrlDirectoryMarkdownEntry = {
+export type FileUrlDirectoryMarkdownEntry = {
   name: string;
   fileUrl: string;
   pathSegments?: string[];
@@ -106,97 +30,14 @@ type FileUrlDirectoryMarkdownEntry = {
   lastModified?: number;
 };
 
-const markdownFilePattern = /\.(md|markdown|mdown|mkd)$/i;
 const maxDirectoryDepth = 6;
 const maxMarkdownEntries = 500;
 
-async function readMarkdownPayload(fileUrl: string): Promise<FileUrlBackgroundResponse> {
-  const parsed = parseReadableMarkdownUrl(fileUrl);
-  if (!parsed || !isMarkdownFileName(getFileName(parsed))) {
-    return {
-      ok: false,
-      error: '只能读取 Markdown 文件。'
-    };
-  }
-
-  try {
-    const markdown = await fetchText(parsed.href);
-    const filePayload: FileUrlFileLaunchPayload = {
-      type: 'file-url',
-      fileName: getFileName(parsed),
-      fileUrl: parsed.href,
-      markdown,
-      createdAt: Date.now()
-    };
-    const directoryPayload = parsed.protocol === 'file:' ? await createDirectoryPayloadForFile(filePayload) : null;
-
-    return {
-      ok: true,
-      payload: directoryPayload ?? filePayload
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : '读取本地 Markdown 文件失败。'
-    };
-  }
-}
-
-async function readDirectoryPayload(directoryUrl: string): Promise<FileUrlBackgroundResponse> {
-  const parsed = parseFileUrl(directoryUrl);
-  if (!parsed || !parsed.pathname.endsWith('/')) {
-    return {
-      ok: false,
-      error: '只能索引 file:// 下的本地目录。'
-    };
-  }
-
-  try {
-    return {
-      ok: true,
-      payload: {
-        type: 'file-directory',
-        directoryName: getDirectoryName(parsed.href),
-        directoryUrl: parsed.href,
-        entries: await collectMarkdownEntriesFromDirectoryUrl(parsed.href),
-        createdAt: Date.now()
-      }
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : '索引本地目录失败。'
-    };
-  }
-}
-
-async function readMarkdownText(fileUrl: string): Promise<FileUrlBackgroundResponse> {
-  const parsed = parseReadableMarkdownUrl(fileUrl);
-  if (!parsed || !isMarkdownFileName(getFileName(parsed))) {
-    return {
-      ok: false,
-      error: '只能读取 Markdown 文件。'
-    };
-  }
-
-  try {
-    return {
-      ok: true,
-      markdown: await fetchText(parsed.href)
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : '读取本地 Markdown 文件失败。'
-    };
-  }
-}
-
-async function createDirectoryPayloadForFile(
+export async function createFileUrlDirectoryLaunchPayload(
   payload: FileUrlFileLaunchPayload
 ): Promise<FileUrlDirectoryLaunchPayload | null> {
   const fileUrl = parseFileUrl(payload.fileUrl);
-  if (!fileUrl) {
+  if (!fileUrl || !isMarkdownFileName(decodeURIComponent(fileUrl.pathname).split('/').at(-1) ?? '')) {
     return null;
   }
 
@@ -232,7 +73,7 @@ async function createDirectoryPayloadForFile(
   };
 }
 
-async function collectMarkdownEntriesFromDirectoryUrl(
+export async function collectMarkdownEntriesFromDirectoryUrl(
   rootDirectoryUrl: string
 ): Promise<FileUrlDirectoryMarkdownEntry[]> {
   const entries: FileUrlDirectoryMarkdownEntry[] = [];
@@ -264,7 +105,7 @@ async function collectMarkdownEntriesFromDirectoryUrl(
         continue;
       }
 
-      const childName = getFileName(childUrl);
+      const childName = decodeURIComponent(childUrl.pathname).split('/').filter(Boolean).at(-1);
       if (!childName || childName === '..' || childName === '.') {
         continue;
       }
@@ -301,27 +142,17 @@ async function collectMarkdownEntriesFromDirectoryUrl(
   return sortDirectoryEntries(entries);
 }
 
-async function openExtensionDetailsPage(): Promise<void> {
-  await chrome.tabs.create({
-    url: `chrome://extensions/?id=${chrome.runtime.id}`
-  });
-}
-
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url, {
-    cache: 'no-store',
-    credentials: 'omit'
-  });
-  if (!response.ok && !(response.status === 0 && url.startsWith('file://'))) {
-    throw new Error(`读取本地 Markdown 失败：${response.status}`);
-  }
-
-  return response.text();
-}
-
 async function fetchDirectoryHtml(directoryUrl: string): Promise<string | null> {
   try {
-    return await fetchText(directoryUrl);
+    const response = await fetch(directoryUrl, {
+      cache: 'no-store',
+      credentials: 'omit'
+    });
+    if (!response.ok && !(response.status === 0 && directoryUrl.startsWith('file://'))) {
+      return null;
+    }
+
+    return response.text();
   } catch {
     return null;
   }
@@ -409,25 +240,12 @@ function parseFileUrl(fileUrl: string): URL | null {
   }
 }
 
-function parseReadableMarkdownUrl(fileUrl: string): URL | null {
-  try {
-    const parsed = new URL(fileUrl);
-    return ['file:', 'http:', 'https:'].includes(parsed.protocol) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function getParentDirectoryUrl(fileUrl: URL): string | null {
   try {
     return new URL('.', fileUrl).href;
   } catch {
     return null;
   }
-}
-
-function getFileName(fileUrl: URL): string {
-  return decodeURIComponent(fileUrl.pathname).split('/').filter(Boolean).at(-1) ?? '';
 }
 
 function getDirectoryName(directoryUrl: string): string {
@@ -441,10 +259,6 @@ function getRelativePathSegments(rootDirectoryUrl: string, fileUrl: string): str
   const rootSegments = decodeURIComponent(root.pathname).split('/').filter(Boolean);
   const fileSegments = decodeURIComponent(file.pathname).split('/').filter(Boolean);
   return fileSegments.slice(rootSegments.length);
-}
-
-function isMarkdownFileName(fileName: string): boolean {
-  return markdownFilePattern.test(fileName);
 }
 
 function shouldSkipDirectory(name: string): boolean {
@@ -465,39 +279,4 @@ function sortDirectoryEntries(entries: FileUrlDirectoryMarkdownEntry[]): FileUrl
 
 function pathsEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((segment, index) => segment === right[index]);
-}
-
-function isReadMarkdownRequest(message: unknown): message is ReadMarkdownRequest {
-  return (
-    Boolean(message) &&
-    typeof message === 'object' &&
-    (message as Partial<ReadMarkdownRequest>).type === 'MARKNEST_READ_FILE_URL_MARKDOWN' &&
-    typeof (message as Partial<ReadMarkdownRequest>).fileUrl === 'string'
-  );
-}
-
-function isReadDirectoryRequest(message: unknown): message is ReadDirectoryRequest {
-  return (
-    Boolean(message) &&
-    typeof message === 'object' &&
-    (message as Partial<ReadDirectoryRequest>).type === 'MARKNEST_READ_FILE_URL_DIRECTORY' &&
-    typeof (message as Partial<ReadDirectoryRequest>).directoryUrl === 'string'
-  );
-}
-
-function isReadTextRequest(message: unknown): message is ReadTextRequest {
-  return (
-    Boolean(message) &&
-    typeof message === 'object' &&
-    (message as Partial<ReadTextRequest>).type === 'MARKNEST_READ_FILE_URL_TEXT' &&
-    typeof (message as Partial<ReadTextRequest>).fileUrl === 'string'
-  );
-}
-
-function isOpenExtensionDetailsRequest(message: unknown): message is OpenExtensionDetailsRequest {
-  return (
-    Boolean(message) &&
-    typeof message === 'object' &&
-    (message as Partial<OpenExtensionDetailsRequest>).type === 'MARKNEST_OPEN_EXTENSION_DETAILS'
-  );
 }

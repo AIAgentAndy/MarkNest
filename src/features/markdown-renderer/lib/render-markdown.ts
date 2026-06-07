@@ -127,14 +127,14 @@ function createSanitizeSchema(trustHtml: boolean): SanitizeSchema {
     },
     protocols: {
       ...defaultSchema.protocols,
-      src: ['http', 'https', 'data', 'blob']
+      src: ['http', 'https', 'data', 'blob', 'file']
     },
     strip: trustHtml ? [] : ['script', 'style', 'iframe', 'object', 'embed']
   } satisfies SanitizeSchema;
 }
 
 function isRemoteOrDataUrl(src: string): boolean {
-  return /^(https?:|data:|blob:|chrome-extension:)/i.test(src);
+  return /^(https?:|data:|blob:|chrome-extension:|file:)/i.test(src);
 }
 
 function escapeHtml(value: string): string {

@@ -1,242 +1,208 @@
-import { describe, expect, it, vi } from 'vitest';
-import { handleExtensionMessage } from '@/../extension/background';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { handleExtensionActionClick, handleExtensionMessage } from '@/../extension/background';
 
 describe('extension background', () => {
-  it('收到本地 Markdown file URL 消息后保存启动载荷并打开扩展页', async () => {
-    const set = vi.fn().mockResolvedValue(undefined);
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('点击工具栏时打开支持说明页，不再打开扩展首页', async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const getURL = vi.fn((path: string) => `chrome-extension://marknest/${path}`);
-    vi.stubGlobal('crypto', {
-      randomUUID: () => 'launch-1'
-    });
     vi.stubGlobal('chrome', {
       runtime: {
         getURL
-      },
-      storage: {
-        session: {
-          set
-        }
       },
       tabs: {
         create
       }
     });
 
-    const handled = await handleExtensionMessage({
-      type: 'MARKNEST_OPEN_LOCAL_FILE_URL',
-      fileName: 'demo.md',
-      fileUrl: 'file:///Users/example/demo.md',
-      markdown: '# Demo'
-    });
+    await handleExtensionActionClick();
 
-    expect(handled).toBe(true);
-    expect(set).toHaveBeenCalledWith({
-      'marknest-launch:launch-1': {
-        type: 'file-url',
-        fileName: 'demo.md',
-        fileUrl: 'file:///Users/example/demo.md',
-        markdown: '# Demo',
-        createdAt: expect.any(Number)
-      }
-    });
     expect(create).toHaveBeenCalledWith({
-      url: 'chrome-extension://marknest/index.html?launch=file-url&id=launch-1'
+      url: 'chrome-extension://marknest/support.html'
     });
   });
 
-  it('从本地 Markdown 文件启动时递归索引父目录和子目录 Markdown', async () => {
-    const set = vi.fn().mockResolvedValue(undefined);
+  it('收到打开扩展详情页消息时创建 Chrome 扩展详情标签页', async () => {
     const create = vi.fn().mockResolvedValue(undefined);
-    const getURL = vi.fn((path: string) => `chrome-extension://marknest/${path}`);
+    vi.stubGlobal('chrome', {
+      runtime: {
+        id: 'marknest-extension-id',
+        getURL: vi.fn((path: string) => `chrome-extension://marknest/${path}`)
+      },
+      tabs: {
+        create
+      }
+    });
+
+    const handled = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_OPEN_EXTENSION_DETAILS'
+      },
+      vi.fn()
+    );
+
+    expect(handled).toBe(false);
+    expect(create).toHaveBeenCalledWith({
+      url: 'chrome://extensions/?id=marknest-extension-id'
+    });
+  });
+
+  it('为 file:// Markdown 直渲染读取当前文件并递归索引父目录', async () => {
+    const sendResponse = vi.fn();
     const fetchLocal = vi.fn(async (url: string) => {
-      const htmlByUrl = new Map([
+      const contentByUrl = new Map([
+        ['file:///Users/example/EffiRoom/AGENTS.md', '# Root\n\n## Guide\n\n正文'],
         [
-          'file:///Users/example/docs/',
+          'file:///Users/example/EffiRoom/',
           [
-            '<a href="current.md">current.md</a>',
-            '<a href="README.md">README.md</a>',
-            '<a href="notes.txt">notes.txt</a>',
-            '<a href="sub/">sub/</a>',
-            '<a href=".hidden/">.hidden/</a>',
+            '<a href="AGENTS.md">AGENTS.md</a>',
+            '<a href="backend/">backend/</a>',
+            '<a href="docs/">docs/</a>',
+            '<a href="node_modules/">node_modules/</a>',
             '<a href="../">Parent Directory</a>'
           ].join('')
         ],
+        ['file:///Users/example/EffiRoom/backend/', '<a href="AGENTS.md">AGENTS.md</a>'],
         [
-          'file:///Users/example/docs/sub/',
+          'file:///Users/example/EffiRoom/docs/',
           [
-            '<a href="guide.markdown">guide.markdown</a>',
-            '<a href="image.png">image.png</a>'
+            '<a href="AGENTS.md">AGENTS.md</a>',
+            '<a href="effiroom-production-architecture.md">effiroom-production-architecture.md</a>'
           ].join('')
         ]
       ]);
-      return new Response(htmlByUrl.get(url) ?? '', {
-        status: htmlByUrl.has(url) ? 200 : 404,
+      return new Response(contentByUrl.get(url) ?? '', {
+        status: contentByUrl.has(url) ? 200 : 404,
         headers: {
-          'Content-Type': 'text/html'
+          'Content-Type': url.endsWith('/') ? 'text/html' : 'text/markdown'
         }
       });
     });
-
-    vi.stubGlobal('crypto', {
-      randomUUID: () => 'launch-indexed-1'
-    });
     vi.stubGlobal('fetch', fetchLocal);
-    vi.stubGlobal('chrome', {
-      runtime: {
-        getURL
+
+    const keepChannelOpen = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_READ_FILE_URL_MARKDOWN',
+        fileUrl: 'file:///Users/example/EffiRoom/AGENTS.md'
       },
-      storage: {
-        session: {
-          set
-        }
-      },
-      tabs: {
-        create
-      }
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
     });
 
-    const handled = await handleExtensionMessage({
-      type: 'MARKNEST_OPEN_LOCAL_FILE_URL',
-      fileName: 'current.md',
-      fileUrl: 'file:///Users/example/docs/current.md',
-      markdown: '# Current'
-    });
-
-    expect(handled).toBe(true);
-    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/docs/', expect.any(Object));
-    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/docs/sub/', expect.any(Object));
-    expect(fetchLocal).not.toHaveBeenCalledWith('file:///Users/example/', expect.any(Object));
-    expect(set).toHaveBeenCalledWith({
-      'marknest-launch:launch-indexed-1': {
+    expect(keepChannelOpen).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: true,
+      payload: {
         type: 'file-directory',
-        directoryName: 'docs',
-        directoryUrl: 'file:///Users/example/docs/',
-        selectedPathSegments: ['current.md'],
-        selectedMarkdown: '# Current',
+        directoryName: 'EffiRoom',
+        directoryUrl: 'file:///Users/example/EffiRoom/',
+        selectedPathSegments: ['AGENTS.md'],
+        selectedMarkdown: '# Root\n\n## Guide\n\n正文',
+        createdAt: expect.any(Number),
         entries: [
           {
-            name: 'current.md',
-            fileUrl: 'file:///Users/example/docs/current.md',
-            pathSegments: ['current.md']
+            name: 'AGENTS.md',
+            fileUrl: 'file:///Users/example/EffiRoom/AGENTS.md',
+            pathSegments: ['AGENTS.md']
           },
           {
-            name: 'README.md',
-            fileUrl: 'file:///Users/example/docs/README.md',
-            pathSegments: ['README.md']
+            name: 'AGENTS.md',
+            fileUrl: 'file:///Users/example/EffiRoom/backend/AGENTS.md',
+            pathSegments: ['backend', 'AGENTS.md']
           },
           {
-            name: 'guide.markdown',
-            fileUrl: 'file:///Users/example/docs/sub/guide.markdown',
-            pathSegments: ['sub', 'guide.markdown']
+            name: 'AGENTS.md',
+            fileUrl: 'file:///Users/example/EffiRoom/docs/AGENTS.md',
+            pathSegments: ['docs', 'AGENTS.md']
+          },
+          {
+            name: 'effiroom-production-architecture.md',
+            fileUrl: 'file:///Users/example/EffiRoom/docs/effiroom-production-architecture.md',
+            pathSegments: ['docs', 'effiroom-production-architecture.md']
           }
-        ],
-        createdAt: expect.any(Number)
-      }
-    });
-    expect(create).toHaveBeenCalledWith({
-      url: 'chrome-extension://marknest/index.html?launch=file-directory&id=launch-indexed-1'
-    });
-  });
-
-  it('兼容 Chrome file:// 目录页的 status 0 和 addRow 动态目录项', async () => {
-    const set = vi.fn().mockResolvedValue(undefined);
-    const create = vi.fn().mockResolvedValue(undefined);
-    const getURL = vi.fn((path: string) => `chrome-extension://marknest/${path}`);
-    const fetchLocal = vi.fn(async (url: string) => {
-      const htmlByUrl = new Map([
-        [
-          'file:///Users/example/docs/',
-          [
-            'addRow("sub","sub",1,160,"160 B",1778564037,"2026/5/12 13:33:57");',
-            'addRow("委托查询报表介绍.md","%E5%A7%94%E6%89%98%E6%9F%A5%E8%AF%A2%E6%8A%A5%E8%A1%A8%E4%BB%8B%E7%BB%8D.md",0,25849,"25.2 kB",1780457078,"2026/6/3 11:24:38");',
-            'addRow("成交查询报表介绍.md","%E6%88%90%E4%BA%A4%E6%9F%A5%E8%AF%A2%E6%8A%A5%E8%A1%A8%E4%BB%8B%E7%BB%8D.md",0,17683,"17.3 kB",1780457078,"2026/6/3 11:24:38");'
-          ].join('\n')
-        ],
-        [
-          'file:///Users/example/docs/sub/',
-          [
-            'addRow("子目录说明.md","%E5%AD%90%E7%9B%AE%E5%BD%95%E8%AF%B4%E6%98%8E.md",0,1024,"1.0 kB",1780457078,"2026/6/3 11:24:38");'
-          ].join('\n')
         ]
-      ]);
-      return {
-        ok: false,
-        status: htmlByUrl.has(url) ? 0 : 404,
-        text: async () => htmlByUrl.get(url) ?? ''
-      } as Response;
-    });
-
-    vi.stubGlobal('crypto', {
-      randomUUID: () => 'launch-chrome-dir-1'
-    });
-    vi.stubGlobal('fetch', fetchLocal);
-    vi.stubGlobal('chrome', {
-      runtime: {
-        getURL
-      },
-      storage: {
-        session: {
-          set
-        }
-      },
-      tabs: {
-        create
       }
     });
+    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/EffiRoom/AGENTS.md', expect.any(Object));
+    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/EffiRoom/', expect.any(Object));
+    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/EffiRoom/backend/', expect.any(Object));
+    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/EffiRoom/docs/', expect.any(Object));
+    expect(fetchLocal).not.toHaveBeenCalledWith('file:///Users/example/EffiRoom/node_modules/', expect.any(Object));
+  });
 
-    const handled = await handleExtensionMessage({
-      type: 'MARKNEST_OPEN_LOCAL_FILE_URL',
-      fileName: '委托查询报表介绍.md',
-      fileUrl: 'file:///Users/example/docs/%E5%A7%94%E6%89%98%E6%9F%A5%E8%AF%A2%E6%8A%A5%E8%A1%A8%E4%BB%8B%E7%BB%8D.md',
-      markdown: '# 委托查询'
+  it('为在线 Markdown 直渲染读取当前文件但不索引目录', async () => {
+    const sendResponse = vi.fn();
+    const fetchRemote = vi.fn(async (url: string) => {
+      return new Response(url === 'https://example.com/docs/guide.md' ? '# Remote\n\n正文' : '', {
+        status: url === 'https://example.com/docs/guide.md' ? 200 : 404,
+        headers: {
+          'Content-Type': 'text/markdown'
+        }
+      });
+    });
+    vi.stubGlobal('fetch', fetchRemote);
+
+    const keepChannelOpen = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_READ_FILE_URL_MARKDOWN',
+        fileUrl: 'https://example.com/docs/guide.md'
+      },
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
     });
 
-    expect(handled).toBe(true);
-    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/docs/', expect.any(Object));
-    expect(fetchLocal).toHaveBeenCalledWith('file:///Users/example/docs/sub/', expect.any(Object));
-    expect(set).toHaveBeenCalledWith({
-      'marknest-launch:launch-chrome-dir-1': {
-        type: 'file-directory',
-        directoryName: 'docs',
-        directoryUrl: 'file:///Users/example/docs/',
-        selectedPathSegments: ['委托查询报表介绍.md'],
-        selectedMarkdown: '# 委托查询',
-        entries: [
-          {
-            name: '成交查询报表介绍.md',
-            fileUrl: 'file:///Users/example/docs/%E6%88%90%E4%BA%A4%E6%9F%A5%E8%AF%A2%E6%8A%A5%E8%A1%A8%E4%BB%8B%E7%BB%8D.md',
-            pathSegments: ['成交查询报表介绍.md']
-          },
-          {
-            name: '委托查询报表介绍.md',
-            fileUrl: 'file:///Users/example/docs/%E5%A7%94%E6%89%98%E6%9F%A5%E8%AF%A2%E6%8A%A5%E8%A1%A8%E4%BB%8B%E7%BB%8D.md',
-            pathSegments: ['委托查询报表介绍.md']
-          },
-          {
-            name: '子目录说明.md',
-            fileUrl: 'file:///Users/example/docs/sub/%E5%AD%90%E7%9B%AE%E5%BD%95%E8%AF%B4%E6%98%8E.md',
-            pathSegments: ['sub', '子目录说明.md']
-          }
-        ],
+    expect(keepChannelOpen).toBe(true);
+    expect(fetchRemote).toHaveBeenCalledWith('https://example.com/docs/guide.md', expect.any(Object));
+    expect(fetchRemote).not.toHaveBeenCalledWith('https://example.com/docs/', expect.any(Object));
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: true,
+      payload: {
+        type: 'file-url',
+        fileName: 'guide.md',
+        fileUrl: 'https://example.com/docs/guide.md',
+        markdown: '# Remote\n\n正文',
         createdAt: expect.any(Number)
       }
-    });
-    expect(create).toHaveBeenCalledWith({
-      url: 'chrome-extension://marknest/index.html?launch=file-directory&id=launch-chrome-dir-1'
     });
   });
 
-  it('收到本地目录 URL 消息后保存目录启动载荷并打开扩展页', async () => {
-    const set = vi.fn().mockResolvedValue(undefined);
-    const create = vi.fn().mockResolvedValue(undefined);
-    const getURL = vi.fn((path: string) => `chrome-extension://marknest/${path}`);
-    vi.stubGlobal('crypto', {
-      randomUUID: () => 'launch-dir-1'
+  it('拒绝非 Markdown 后台读取请求', async () => {
+    const sendResponse = vi.fn();
+
+    const keepChannelOpen = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_READ_FILE_URL_MARKDOWN',
+        fileUrl: 'https://example.com/demo.txt'
+      },
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
     });
+
+    expect(keepChannelOpen).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      error: '只能读取 Markdown 文件。'
+    });
+  });
+
+  it('不再处理旧的本地文件启动消息', async () => {
+    const create = vi.fn();
+    const set = vi.fn();
     vi.stubGlobal('chrome', {
       runtime: {
-        getURL
+        getURL: vi.fn((path: string) => `chrome-extension://marknest/${path}`)
       },
       storage: {
         session: {
@@ -248,35 +214,18 @@ describe('extension background', () => {
       }
     });
 
-    const handled = await handleExtensionMessage({
-      type: 'MARKNEST_OPEN_LOCAL_DIRECTORY_URL',
-      directoryName: 'docs',
-      directoryUrl: 'file:///Users/example/docs/',
-      entries: [
-        {
-          name: 'README.md',
-          fileUrl: 'file:///Users/example/docs/README.md'
-        }
-      ]
-    });
+    const handled = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_OPEN_LOCAL_FILE_URL',
+        fileName: 'demo.md',
+        fileUrl: 'file:///Users/example/demo.md',
+        markdown: '# Demo'
+      },
+      vi.fn()
+    );
 
-    expect(handled).toBe(true);
-    expect(set).toHaveBeenCalledWith({
-      'marknest-launch:launch-dir-1': {
-        type: 'file-directory',
-        directoryName: 'docs',
-        directoryUrl: 'file:///Users/example/docs/',
-        entries: [
-          {
-            name: 'README.md',
-            fileUrl: 'file:///Users/example/docs/README.md'
-          }
-        ],
-        createdAt: expect.any(Number)
-      }
-    });
-    expect(create).toHaveBeenCalledWith({
-      url: 'chrome-extension://marknest/index.html?launch=file-directory&id=launch-dir-1'
-    });
+    expect(handled).toBe(false);
+    expect(create).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
   });
 });

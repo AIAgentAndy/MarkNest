@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MarkNest",
   "short_name": "MarkNest",
-  "description": "让 Markdown 文档优雅归巢，在 Chrome 中沉浸阅读本地文档。",
+  "description": "让 Markdown 文档优雅归巢，在 Chrome 中沉浸阅读本地与在线文档。",
   "version": "1.0.0",
   "action": {
     "default_title": "打开 MarkNest"
@@ -12,7 +12,7 @@
     "type": "module"
   },
   "permissions": ["storage"],
-  "host_permissions": ["file:///*"],
+  "host_permissions": ["file:///*", "http://*/*", "https://*/*"],
   "content_scripts": [
     {
       "matches": [
@@ -20,11 +20,20 @@
         "file:///*.markdown",
         "file:///*.mdown",
         "file:///*.mkd",
+        "http://*/*",
+        "https://*/*",
         "file://*/*/",
         "file:///"
       ],
-      "js": ["file-launch-content-script.js"],
+      "js": ["file-url-inline-boot.js"],
+      "css": ["file-url-inline-entry.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*", "about/*", "file-url-inline-entry.js", "file-url-inline-assets/*"],
+      "matches": ["file:///*", "http://*/*", "https://*/*"]
     }
   ],
   "icons": {

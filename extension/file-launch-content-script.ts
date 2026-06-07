@@ -19,12 +19,23 @@ export type LocalDirectoryMarkdownEntry = {
   fileUrl: string;
 };
 
+export type FileUrlInlineLaunchPayload = {
+  type: 'file-url';
+  fileName: string;
+  fileUrl: string;
+  markdown: string;
+  createdAt: number;
+};
+
 const markdownFilePattern = /\.(md|markdown|mdown|mkd)$/i;
 
 export function shouldLaunchLocalMarkdown(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'file:' && markdownFilePattern.test(decodeURIComponent(parsed.pathname));
+    return (
+      (parsed.protocol === 'file:' || parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      markdownFilePattern.test(decodeURIComponent(parsed.pathname))
+    );
   } catch {
     return false;
   }
@@ -59,6 +70,21 @@ export function createLocalMarkdownLaunchMessage(
   };
 }
 
+export function createFileUrlInlineLaunchPayload(
+  documentRef: Document,
+  fileUrl: string,
+  now = Date.now()
+): FileUrlInlineLaunchPayload {
+  const message = createLocalMarkdownLaunchMessage(documentRef, fileUrl);
+  return {
+    type: 'file-url',
+    fileName: message.fileName,
+    fileUrl: message.fileUrl,
+    markdown: message.markdown,
+    createdAt: now
+  };
+}
+
 export function createLocalDirectoryLaunchMessage(
   documentRef: Document,
   directoryUrl: string
@@ -79,34 +105,14 @@ export function createLocalDirectoryLaunchMessage(
 }
 
 export function launchLocalMarkdownFromCurrentPage() {
-  if (
-    typeof chrome === 'undefined' ||
-    !chrome.runtime?.sendMessage
-  ) {
-    return;
-  }
-
   if (shouldLaunchLocalMarkdown(window.location.href)) {
-    const message = createLocalMarkdownLaunchMessage(document, window.location.href);
-    if (!message.markdown.trim()) {
-      return;
-    }
-
-    void chrome.runtime.sendMessage(message);
     return;
   }
 
   if (shouldLaunchLocalMarkdownDirectory(window.location.href)) {
-    const message = createLocalDirectoryLaunchMessage(document, window.location.href);
-    if (message.entries.length === 0) {
-      return;
-    }
-
-    void chrome.runtime.sendMessage(message);
+    return;
   }
 }
-
-launchLocalMarkdownFromCurrentPage();
 
 function createMarkdownEntryFromAnchor(
   anchor: HTMLAnchorElement,

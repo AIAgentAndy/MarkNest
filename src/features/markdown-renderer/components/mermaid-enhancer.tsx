@@ -37,7 +37,15 @@ export function MermaidEnhancer({
     let idleTaskId: number | null = null;
 
     async function renderMermaidBlocks() {
+      if (!document.querySelector('.markdown-body .mermaid-block[data-mermaid-source]')) {
+        return;
+      }
+
       const mermaidModule = (await import('mermaid')).default as MermaidApi;
+      if (cancelled) {
+        return;
+      }
+
       const themeChanged = previousThemeRef.current !== theme;
       previousThemeRef.current = theme;
 
@@ -46,6 +54,10 @@ export function MermaidEnhancer({
         theme: theme === 'dark' ? 'dark' : 'default',
         suppressErrorRendering: true
       });
+
+      if (cancelled) {
+        return;
+      }
 
       const blocks = Array.from(
         document.querySelectorAll<HTMLElement>(

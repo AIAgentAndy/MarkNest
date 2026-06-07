@@ -61,6 +61,40 @@ describe('MarkNest app shell styling', () => {
     expect(readCssRule(css, '.mermaid-fullscreen-zoom-thumb')).toContain('top: var(--zoom-thumb-top);');
     expect(css).not.toContain('.mermaid-fullscreen-zoom input[type=\'range\']');
   });
+
+  it('prints only the Markdown body from file URL reader pages', async () => {
+    const css = await readFile(cssPath, 'utf8');
+
+    expect(css).toContain('@media print');
+    expect(css).toContain('.floating-control-toggle,');
+    expect(css).toContain('.reader-menu-popover,');
+    expect(css).toContain('.sidebar,');
+    expect(css).toContain('.sidebar-resizer,');
+    expect(css).toContain('.sidebar-peek-toggle,');
+    expect(css).toContain('.scroll-top-button');
+    expect(css).toContain('display: none !important;');
+    expect(css).toContain('.file-url-reader-layout {');
+    expect(css).toContain('display: block !important;');
+    expect(css).toContain('.content-pane {');
+    expect(css).toContain('overflow: visible !important;');
+    expect(css).toContain('.markdown-reader,');
+    expect(css).toContain('.markdown-source-view');
+    expect(css).toContain('width: 100% !important;');
+  });
+
+  it('uses a soft mint treatment for the scroll-to-top helper button', async () => {
+    const css = await readFile(cssPath, 'utf8');
+    const buttonRule = readCssRule(css, '.scroll-top-button');
+    const hoverRule = readCssRule(css, '.scroll-top-button:hover');
+
+    expect(buttonRule).toContain('border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));');
+    expect(buttonRule).toContain('background: color-mix(in srgb, var(--accent-soft) 78%, var(--panel-bg));');
+    expect(buttonRule).toContain('color: var(--accent-strong);');
+    expect(buttonRule).toContain('box-shadow: 0 10px 24px rgba(15, 118, 110, 0.14);');
+    expect(buttonRule).not.toContain('background: var(--accent);');
+    expect(buttonRule).not.toContain('color: #fff;');
+    expect(hoverRule).toContain('background: color-mix(in srgb, var(--accent-soft-alt) 82%, var(--panel-bg));');
+  });
 });
 
 function readCssRule(css: string, selector: string): string {

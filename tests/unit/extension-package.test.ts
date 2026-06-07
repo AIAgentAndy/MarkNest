@@ -8,6 +8,7 @@ const sourceManifestPath = path.join(process.cwd(), 'extension', 'manifest.json'
 const packagePath = path.join(process.cwd(), 'package.json');
 const layoutPath = path.join(process.cwd(), 'src', 'app', 'layout.tsx');
 const readerAppPath = path.join(process.cwd(), 'src', 'features', 'workspace', 'components', 'reader-app.tsx');
+const sampleWorkspacePath = path.join(process.cwd(), 'src', 'features', 'workspace', 'lib', 'sample-workspace.ts');
 
 describe('Chrome 扩展打包产物', () => {
   it('项目、页面和阅读器外壳统一使用 MarkNest 品牌', async () => {
@@ -31,7 +32,8 @@ describe('Chrome 扩展打包产物', () => {
       action?: { default_title?: string };
       permissions?: string[];
       host_permissions?: string[];
-      content_scripts?: Array<{ matches?: string[]; js?: string[]; run_at?: string }>;
+      content_scripts?: Array<{ matches?: string[]; js?: string[]; css?: string[]; run_at?: string }>;
+      web_accessible_resources?: Array<{ resources?: string[]; matches?: string[] }>;
     };
 
     expect(manifest.name).toBe('MarkNest');
@@ -41,7 +43,7 @@ describe('Chrome 扩展打包产物', () => {
     expect(manifest.description.length).toBeLessThanOrEqual(132);
     expect(manifest.action?.default_title).toBe('打开 MarkNest');
     expect(manifest.permissions).toEqual(['storage']);
-    expect(manifest.host_permissions).toEqual(['file:///*']);
+    expect(manifest.host_permissions).toEqual(['file:///*', 'http://*/*', 'https://*/*']);
     expect(manifest.content_scripts).toEqual([
       {
         matches: [
@@ -49,11 +51,20 @@ describe('Chrome 扩展打包产物', () => {
           'file:///*.markdown',
           'file:///*.mdown',
           'file:///*.mkd',
+          'http://*/*',
+          'https://*/*',
           'file://*/*/',
           'file:///'
         ],
-        js: ['file-launch-content-script.js'],
+        js: ['file-url-inline-boot.js'],
+        css: ['file-url-inline-entry.css'],
         run_at: 'document_idle'
+      }
+    ]);
+    expect(manifest.web_accessible_resources).toEqual([
+      {
+        resources: ['icons/*', 'about/*', 'file-url-inline-entry.js', 'file-url-inline-assets/*'],
+        matches: ['file:///*', 'http://*/*', 'https://*/*']
       }
     ]);
   });
@@ -70,6 +81,70 @@ describe('Chrome 扩展打包产物', () => {
     expect(packageLock.version).toBe('1.0.0');
     expect(packageLock.packages[''].version).toBe('1.0.0');
     expect(manifest.version).toBe('1.0.0');
+  });
+
+  it('工具栏入口指向的支持说明被打入扩展产物', async () => {
+    expect(existsSync(path.join(extensionDir, 'SUPPORT.md'))).toBe(true);
+    expect(existsSync(path.join(extensionDir, 'support.html'))).toBe(true);
+    expect(existsSync(path.join(extensionDir, 'reader.html'))).toBe(true);
+    expect(existsSync(path.join(extensionDir, 'index.html'))).toBe(false);
+    expect(existsSync(path.join(extensionDir, '404.html'))).toBe(false);
+    expect(existsSync(path.join(extensionDir, 'next-assets'))).toBe(false);
+
+    const supportMarkdown = await readFile(path.join(extensionDir, 'SUPPORT.md'), 'utf8');
+    expect(supportMarkdown.startsWith('\uFEFF')).toBe(true);
+    expect(supportMarkdown).toContain('MarkNest 支持');
+
+    const supportHtml = await readFile(path.join(extensionDir, 'support.html'), 'utf8');
+    expect(supportHtml).toContain('<meta charset="utf-8">');
+    expect(supportHtml).toContain('<link rel="icon" type="image/png" href="icons/icon-32.png">');
+    expect(supportHtml).toContain('MarkNest 使用引导');
+    expect(supportHtml).toContain('直接用 Chrome 打开本地或在线 Markdown 文件');
+    expect(supportHtml).toContain('允许访问文件网址');
+    expect(supportHtml).toContain('chrome://extensions/?id=');
+    expect(supportHtml).toContain('data-extension-details-button');
+    expect(supportHtml).toContain('data-sample-button');
+    expect(supportHtml).toContain('data-about-panel');
+    expect(supportHtml).toContain('about-strip');
+    expect(supportHtml).toContain('title="GitHub"');
+    expect(supportHtml).toContain('title="点击复制作者邮箱地址（AIAgentAndy001@gmail.com）"');
+    expect(supportHtml).toContain('title="扫码加我微信（备注：MarkNest）"');
+    expect(supportHtml).toContain('title="扫码请作者喝杯饮料，感谢~"');
+    expect(supportHtml).toContain('data-copy-email-button');
+    expect(supportHtml).toContain('wx.png');
+    expect(supportHtml).toContain('coffee.png');
+    expect(supportHtml).toContain('所有读取都发生在浏览器本地');
+    expect(supportHtml).not.toContain('data-open-file-button');
+    expect(supportHtml).not.toContain('打开文件');
+    expect(supportHtml).not.toContain('打开目录');
+
+    const supportScript = await readFile(path.join(extensionDir, 'support.js'), 'utf8');
+    expect(supportScript).toContain('MARKNEST_OPEN_EXTENSION_DETAILS');
+    expect(supportScript).toContain('chrome.tabs.create');
+    expect(supportScript).toContain('reader.html?launch=sample');
+    expect(supportScript).toContain('navigator.clipboard.writeText');
+    expect(supportScript).toContain('AIAgentAndy001@gmail.com');
+    expect(supportScript).toContain('已复制作者邮箱地址');
+    expect(supportScript).not.toContain('window.location.href = chrome.runtime.getURL("reader.html?launch=sample")');
+    expect(supportScript).not.toContain('showOpenFilePicker');
+    expect(supportScript).not.toContain('chrome.storage.session.set');
+
+    const readerHtml = await readFile(path.join(extensionDir, 'reader.html'), 'utf8');
+    expect(readerHtml).toContain('<meta charset="utf-8">');
+    expect(readerHtml).toContain('<link rel="icon" type="image/png" href="icons/icon-32.png">');
+    expect(readerHtml).toContain('file-url-inline-entry.css');
+    expect(readerHtml).toContain('file-url-inline-entry.js');
+  });
+
+  it('内置示例覆盖表格、代码、数学公式和 Mermaid 图表', async () => {
+    const sampleWorkspace = await readFile(sampleWorkspacePath, 'utf8');
+
+    expect(sampleWorkspace).toContain('| 能力 | 示例 | 状态 |');
+    expect(sampleWorkspace).toContain('```ts');
+    expect(sampleWorkspace).toContain('$$');
+    expect(sampleWorkspace).toContain('E = mc^2');
+    expect(sampleWorkspace).toContain('```mermaid');
+    expect(sampleWorkspace).toContain('sequenceDiagram');
   });
 
   it('不包含以下划线开头的文件或目录名', async () => {
@@ -129,6 +204,15 @@ describe('Chrome 扩展打包产物', () => {
     }
 
     expect(unsafeRuntimeFallbacks).toEqual([]);
+  });
+
+  it('file:// 直渲染入口不预加载会被页面根路径解析的动态分包资源', async () => {
+    const entry = await readFile(path.join(extensionDir, 'file-url-inline-entry.js'), 'utf8');
+    const unsafePreloadDependencies = [
+      ...entry.matchAll(/TN\([^)]*,\s*\[[^\]]*file-url-inline-assets\//g)
+    ].map((match) => match[0]);
+
+    expect(unsafePreloadDependencies).toEqual([]);
   });
 });
 

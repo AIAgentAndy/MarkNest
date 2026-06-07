@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createFileUrlInlineLaunchPayload,
   createLocalDirectoryLaunchMessage,
   createLocalMarkdownLaunchMessage,
+  launchLocalMarkdownFromCurrentPage,
   shouldLaunchLocalMarkdownDirectory,
   shouldLaunchLocalMarkdown
 } from '../../extension/file-launch-content-script';
@@ -11,7 +13,9 @@ describe('file-launch-content-script', () => {
     expect(shouldLaunchLocalMarkdown('file:///Users/example/demo.md')).toBe(true);
     expect(shouldLaunchLocalMarkdown('file:///Users/example/demo.markdown')).toBe(true);
     expect(shouldLaunchLocalMarkdown('file:///Users/example/demo.txt')).toBe(false);
-    expect(shouldLaunchLocalMarkdown('https://example.com/demo.md')).toBe(false);
+    expect(shouldLaunchLocalMarkdown('https://example.com/demo.md')).toBe(true);
+    expect(shouldLaunchLocalMarkdown('https://example.com/docs/demo.markdown?raw=1')).toBe(true);
+    expect(shouldLaunchLocalMarkdown('https://example.com/demo.txt')).toBe(false);
   });
 
   it('识别 file:// 本地目录 URL', () => {
@@ -44,6 +48,19 @@ describe('file-launch-content-script', () => {
     });
   });
 
+  it('从 Chrome 打开的在线 Markdown 页面提取文件名和正文', () => {
+    document.body.innerHTML = '<pre># Online\n\n远程正文</pre>';
+
+    const message = createLocalMarkdownLaunchMessage(document, 'https://example.com/docs/Guide%20Book.md?raw=1');
+
+    expect(message).toEqual({
+      type: 'MARKNEST_OPEN_LOCAL_FILE_URL',
+      fileName: 'Guide Book.md',
+      fileUrl: 'https://example.com/docs/Guide%20Book.md?raw=1',
+      markdown: '# Online\n\n远程正文'
+    });
+  });
+
   it('从 Chrome 本地目录页提取 Markdown 文件链接', () => {
     document.body.innerHTML = [
       '<a href="README.md">README.md</a>',
@@ -73,5 +90,36 @@ describe('file-launch-content-script', () => {
         }
       ]
     });
+  });
+
+  it('为 file:// Markdown 页面创建直渲染启动载荷，包含当前文件和正文', () => {
+    document.body.innerHTML = '<pre># Current\n\n正文</pre>';
+
+    const payload = createFileUrlInlineLaunchPayload(document, 'file:///Users/example/docs/current.md');
+
+    expect(payload).toMatchObject({
+      type: 'file-url',
+      fileName: 'current.md',
+      fileUrl: 'file:///Users/example/docs/current.md',
+      markdown: '# Current\n\n正文'
+    });
+  });
+
+  it('直渲染模式不再向后台发送打开扩展页消息', () => {
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage
+      }
+    });
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: new URL('file:///Users/example/docs/current.md')
+    });
+    document.body.innerHTML = '<pre># Current</pre>';
+
+    launchLocalMarkdownFromCurrentPage();
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

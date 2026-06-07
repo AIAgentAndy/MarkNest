@@ -18,16 +18,18 @@ test('示例模式展示目录树和 Markdown 阅读区', async ({ page }) => {
 test('示例模式支持 Mermaid、大纲切换和顶部折叠', async ({ page }) => {
   await page.goto('/?sample=1');
 
-  await expect(page.locator('.mermaid-block svg')).toBeVisible();
+  await expect(page.locator('.mermaid-block[data-rendered="true"] svg')).toBeVisible({
+    timeout: 15_000
+  });
 
   await page.getByRole('tab', { name: '显示文档大纲' }).click();
   await expect(page.getByRole('button', { name: 'MarkNest 示例', exact: true })).toBeVisible();
-  await expect(page.locator('.mermaid-block svg')).toBeVisible();
+  await expect(page.locator('.mermaid-block[data-rendered="true"] svg')).toBeVisible();
 
   await page.getByRole('button', { name: '折叠 MarkNest 示例' }).click();
-  await expect(page.getByRole('button', { name: '核心流程' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Mermaid 流程图' })).toBeHidden();
   await page.getByRole('button', { name: '展开 MarkNest 示例' }).click();
-  await expect(page.getByRole('button', { name: '核心流程' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mermaid 流程图' })).toBeVisible();
 
   await page.getByRole('button', { name: '折叠顶部操作区域' }).click();
   await expect(page.getByRole('button', { name: '打开目录' })).toBeHidden();
@@ -202,8 +204,19 @@ test('右侧正文独立滚动时左侧大纲固定并高亮当前标题', async
   await page.getByRole('tab', { name: '显示文档大纲' }).click();
 
   const sidebarBoxBeforeScroll = await page.locator('.sidebar').boundingBox();
-  await page.locator('[id="7-高精度分析-v3-流程"]').evaluate((element) => {
-    element.scrollIntoView({ block: 'start' });
+  await page.locator('.content-pane').evaluate((pane, headingId) => {
+    const heading = Array.from(pane.querySelectorAll<HTMLElement>('[id]')).find((element) => {
+      return element.id === headingId;
+    });
+    if (!heading) {
+      throw new Error(`找不到标题：${headingId}`);
+    }
+    pane.scrollTop = heading.offsetTop;
+    pane.dispatchEvent(new Event('scroll'));
+  }, '7-高精度分析-v3-流程');
+  await page.waitForTimeout(180);
+  await page.locator('.content-pane').evaluate((pane) => {
+    pane.dispatchEvent(new Event('scroll'));
   });
   await expect(page.locator('.outline-row[aria-current="location"]')).toHaveText('7. 高精度分析 V3 流程');
   const sidebarBoxAfterScroll = await page.locator('.sidebar').boundingBox();
@@ -267,12 +280,12 @@ test('大文件阅读时支持取消选择、返回顶部和快速打开关于',
   await expect(page.getByRole('navigation', { name: '当前位置' })).toHaveCount(0);
 
   await page.getByRole('button', { name: '打开文件' }).click();
-  await expect(page.getByText('Failed to execute')).toBeHidden();
+  await expect(page.getByText('Failed to execute')).toHaveCount(0);
   await expect(page.locator('.notice-error')).toBeHidden();
   await expect(page.getByRole('heading', { name: 'KnowledgeBaseService 设计文档' })).toBeVisible();
 
   await page.getByRole('button', { name: '打开目录' }).click();
-  await expect(page.getByText('Failed to execute')).toBeHidden();
+  await expect(page.getByText('Failed to execute')).toHaveCount(0);
   await expect(page.locator('.notice-error')).toBeHidden();
 
   await page.locator('.content-pane').evaluate((element) => {
