@@ -21,7 +21,6 @@ export function handleExtensionMessage(
   sendResponse: (response: FileUrlBackgroundResponse) => void = () => {}
 ): boolean {
   if (isOpenExtensionDetailsRequest(message)) {
-    void openExtensionDetailsPage();
     return false;
   }
 
@@ -299,12 +298,6 @@ async function collectMarkdownEntriesFromDirectoryUrl(
   }
 
   return sortDirectoryEntries(entries);
-}
-
-async function openExtensionDetailsPage(): Promise<void> {
-  await chrome.tabs.create({
-    url: `chrome://extensions/?id=${chrome.runtime.id}`
-  });
 }
 
 async function fetchText(url: string): Promise<string> {

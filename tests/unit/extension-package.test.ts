@@ -119,13 +119,16 @@ describe('Chrome 扩展打包产物', () => {
     expect(supportHtml).not.toContain('打开目录');
 
     const supportScript = await readFile(path.join(extensionDir, 'support.js'), 'utf8');
-    expect(supportScript).toContain('MARKNEST_OPEN_EXTENSION_DETAILS');
+    expect(supportScript).toContain('navigator.clipboard.writeText(detailsUrl)');
+    expect(supportScript).toContain('已复制扩展详情页地址');
     expect(supportScript).toContain('chrome.tabs.create');
     expect(supportScript).toContain('reader.html?launch=sample');
     expect(supportScript).toContain('navigator.clipboard.writeText');
     expect(supportScript).toContain('AIAgentAndy001@gmail.com');
     expect(supportScript).toContain('已复制作者邮箱地址');
     expect(supportScript).not.toContain('window.location.href = chrome.runtime.getURL("reader.html?launch=sample")');
+    expect(supportScript).not.toContain('MARKNEST_OPEN_EXTENSION_DETAILS');
+    expect(supportScript).not.toContain('chrome.runtime.sendMessage({ type: "MARKNEST_OPEN_EXTENSION_DETAILS" });');
     expect(supportScript).not.toContain('showOpenFilePicker');
     expect(supportScript).not.toContain('chrome.storage.session.set');
 

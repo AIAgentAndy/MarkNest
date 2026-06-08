@@ -126,6 +126,12 @@ test('打包后的 Chrome 扩展引导页可打开示例并进入新版阅读器
     await expect(page.getByText('直接用 Chrome 打开本地或在线 Markdown 文件')).toBeVisible();
     await expect(page.getByRole('button', { name: '打开文件' })).toHaveCount(0);
     await expect(page.locator('link[rel="icon"][href="icons/icon-32.png"]')).toHaveCount(1);
+
+    const pagesBeforeDetailsClick = context.pages().length;
+    await page.getByRole('button', { name: '扩展详情页', exact: true }).click();
+    await expect(page.getByText('已复制扩展详情页地址')).toBeVisible();
+    expect(context.pages()).toHaveLength(pagesBeforeDetailsClick);
+
     await page.getByRole('button', { name: '关于' }).click();
     const aboutPanel = page.locator('[data-about-panel]');
     await expect(aboutPanel).toBeVisible();

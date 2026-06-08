@@ -25,7 +25,7 @@ describe('extension background', () => {
     });
   });
 
-  it('收到打开扩展详情页消息时创建 Chrome 扩展详情标签页', async () => {
+  it('不会尝试创建 chrome:// 扩展详情标签页，避免触发 Chrome 本地资源加载错误', async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('chrome', {
       runtime: {
@@ -45,9 +45,7 @@ describe('extension background', () => {
     );
 
     expect(handled).toBe(false);
-    expect(create).toHaveBeenCalledWith({
-      url: 'chrome://extensions/?id=marknest-extension-id'
-    });
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('为 file:// Markdown 直渲染读取当前文件并递归索引父目录', async () => {
