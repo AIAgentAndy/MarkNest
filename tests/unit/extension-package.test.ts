@@ -51,19 +51,24 @@ describe('Chrome 扩展打包产物', () => {
           'file:///*.markdown',
           'file:///*.mdown',
           'file:///*.mkd',
-          'http://*/*',
-          'https://*/*',
+          'http://*/*.md*',
+          'http://*/*.markdown*',
+          'http://*/*.mdown*',
+          'http://*/*.mkd*',
+          'https://*/*.md*',
+          'https://*/*.markdown*',
+          'https://*/*.mdown*',
+          'https://*/*.mkd*',
           'file://*/*/',
           'file:///'
         ],
         js: ['file-url-inline-boot.js'],
-        css: ['file-url-inline-entry.css'],
         run_at: 'document_idle'
       }
     ]);
     expect(manifest.web_accessible_resources).toEqual([
       {
-        resources: ['icons/*', 'about/*', 'file-url-inline-entry.js', 'file-url-inline-assets/*'],
+        resources: ['icons/*', 'about/*', 'file-url-inline-entry.css', 'file-url-inline-entry.js', 'file-url-inline-assets/*'],
         matches: ['file:///*', 'http://*/*', 'https://*/*']
       }
     ]);
@@ -216,6 +221,12 @@ describe('Chrome 扩展打包产物', () => {
     ].map((match) => match[0]);
 
     expect(unsafePreloadDependencies).toEqual([]);
+  });
+
+  it('静态内容脚本产物不包含顶层 ESM export', async () => {
+    const boot = await readFile(path.join(extensionDir, 'file-url-inline-boot.js'), 'utf8');
+
+    expect(boot).not.toMatch(/^export\s+/m);
   });
 });
 

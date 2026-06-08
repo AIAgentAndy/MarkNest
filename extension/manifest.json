@@ -20,19 +20,30 @@
         "file:///*.markdown",
         "file:///*.mdown",
         "file:///*.mkd",
-        "http://*/*",
-        "https://*/*",
+        "http://*/*.md*",
+        "http://*/*.markdown*",
+        "http://*/*.mdown*",
+        "http://*/*.mkd*",
+        "https://*/*.md*",
+        "https://*/*.markdown*",
+        "https://*/*.mdown*",
+        "https://*/*.mkd*",
         "file://*/*/",
         "file:///"
       ],
       "js": ["file-url-inline-boot.js"],
-      "css": ["file-url-inline-entry.css"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*", "about/*", "file-url-inline-entry.js", "file-url-inline-assets/*"],
+      "resources": [
+        "icons/*",
+        "about/*",
+        "file-url-inline-entry.css",
+        "file-url-inline-entry.js",
+        "file-url-inline-assets/*"
+      ],
       "matches": ["file:///*", "http://*/*", "https://*/*"]
     }
   ],

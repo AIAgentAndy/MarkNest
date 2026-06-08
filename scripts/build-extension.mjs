@@ -31,7 +31,7 @@ await writeFile(
 const fileUrlInlineBootSource = await readFile(path.join(extensionDir, 'file-url-inline-boot.ts'), 'utf8');
 await writeFile(
   path.join(distDir, 'file-url-inline-boot.js'),
-  transpileExtensionTypeScript(fileUrlInlineBootSource),
+  removeModuleExports(transpileExtensionTypeScript(fileUrlInlineBootSource)),
   'utf8'
 );
 await bundleFileUrlInlineEntry();
