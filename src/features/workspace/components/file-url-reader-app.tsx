@@ -36,6 +36,7 @@ import type { AssetUrlResolver } from '@/features/markdown-renderer/types';
 import { getParentSegments, pathSegmentsToId } from '@/shared/path/path-utils';
 import { sampleMarkdownByPath } from '../lib/sample-workspace';
 import { readFileUrlTextFromBackground } from '../lib/file-url-background-client';
+import { navigateToFileUrl } from '../lib/navigate-to-file-url';
 import type {
   FileUrlDirectoryLaunchPayload,
   FileUrlDirectoryMarkdownEntry,
@@ -80,9 +81,9 @@ export function FileUrlReaderApp({ payload }: { payload: FileUrlLaunchPayload })
   const [fullscreenActive, setFullscreenActive] = useState(false);
   const [emailCopyFeedbackVisible, setEmailCopyFeedbackVisible] = useState(false);
   const [theme, setTheme] = useState<ReaderTheme>('system');
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('outline');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(initialState.sidebar.mode);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialState.sidebar.collapsed);
+  const [sidebarWidth, setSidebarWidth] = useState(initialState.sidebar.width);
   const [outlineItems, setOutlineItems] = useState<DocumentOutlineItem[]>([]);
   const [expandedOutlineIds, setExpandedOutlineIds] = useState<Set<string>>(new Set());
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
@@ -212,6 +213,32 @@ export function FileUrlReaderApp({ payload }: { payload: FileUrlLaunchPayload })
       return next;
     });
   }, [workspace.id]);
+
+  // 点击目录树中的本地文件时整页导航到该文件 URL，确保浏览器地址栏更新为完整路径。
+  // 示例模式（marknest://）或未命中文件句柄时回退到应用内加载，不触发导航。
+  const navigateToFile = useCallback(
+    (pathSegments: string[]) => {
+      const entry = fileHandles.get(pathSegments.join('/'));
+      if (!entry || entry.fileUrl.startsWith('marknest://')) {
+        expandPath(getParentSegments(pathSegments));
+        void loadFileByPath(pathSegments);
+        return;
+      }
+
+      navigateToFileUrl(entry.fileUrl);
+    },
+    [expandPath, fileHandles, loadFileByPath]
+  );
+
+  // 侧栏布局属于阅读偏好，整页导航后会随页面重置，因此全局持久化到 localStorage，
+  // 挂载时同步恢复，避免每次切换文件都要重新展开侧栏（跨子目录导航也保持一致）。
+  useEffect(() => {
+    writeReaderSidebarState({
+      collapsed: sidebarCollapsed,
+      mode: sidebarMode,
+      width: sidebarWidth
+    });
+  }, [sidebarCollapsed, sidebarMode, sidebarWidth]);
 
   const toggleSourceVisible = useCallback(() => {
     setSourceVisible((current) => !current);
@@ -598,8 +625,7 @@ export function FileUrlReaderApp({ payload }: { payload: FileUrlLaunchPayload })
                 })
               }
               onSelectFile={(path) => {
-                expandPath(getParentSegments(path));
-                void loadFileByPath(path);
+                void navigateToFile(path);
               }}
             />
           ) : (
@@ -659,6 +685,49 @@ export function FileUrlReaderApp({ payload }: { payload: FileUrlLaunchPayload })
   );
 }
 
+type ReaderSidebarState = {
+  collapsed: boolean;
+  width: number;
+  mode: SidebarMode;
+};
+
+const defaultReaderSidebarState: ReaderSidebarState = {
+  collapsed: true,
+  width: defaultSidebarWidth,
+  mode: 'outline'
+};
+
+// file:// 下 localStorage 跨文件共享（同属 null origin），侧栏布局作为阅读偏好全局持久化，
+// 使整页导航切换文件（含跨子目录）后侧栏仍保持之前的展开状态与宽度和模式。
+function readReaderSidebarState(): ReaderSidebarState {
+  try {
+    const raw = window.localStorage.getItem('marknest:reader-sidebar');
+    if (!raw) {
+      return { ...defaultReaderSidebarState };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<ReaderSidebarState>;
+    return {
+      collapsed: typeof parsed.collapsed === 'boolean' ? parsed.collapsed : defaultReaderSidebarState.collapsed,
+      width:
+        typeof parsed.width === 'number' && parsed.width >= minimumSidebarWidth
+          ? parsed.width
+          : defaultReaderSidebarState.width,
+      mode: parsed.mode === 'files' || parsed.mode === 'outline' ? parsed.mode : defaultReaderSidebarState.mode
+    };
+  } catch {
+    return { ...defaultReaderSidebarState };
+  }
+}
+
+function writeReaderSidebarState(state: ReaderSidebarState): void {
+  try {
+    window.localStorage.setItem('marknest:reader-sidebar', JSON.stringify(state));
+  } catch {
+    // 部分浏览器对 file:// localStorage 写入有限制，忽略以保证阅读体验。
+  }
+}
+
 function createInitialState(payload: FileUrlLaunchPayload): {
   workspace: WorkspaceRecord;
   tree: Extract<MarkdownTreeNode, { kind: 'directory' }>;
@@ -667,6 +736,7 @@ function createInitialState(payload: FileUrlLaunchPayload): {
   selectedPath: string[];
   markdown: string;
   message: string;
+  sidebar: { collapsed: boolean; width: number; mode: SidebarMode };
 } {
   if (payload.type === 'file-directory') {
     const workspace = createWorkspaceRecord(payload.directoryName);
@@ -683,7 +753,8 @@ function createInitialState(payload: FileUrlLaunchPayload): {
       markdown: payload.selectedMarkdown && pathsEqual(selectedPath, payload.selectedPathSegments ?? [])
         ? payload.selectedMarkdown
         : '',
-      message: ''
+      message: '',
+      sidebar: readReaderSidebarState()
     };
   }
 
@@ -706,7 +777,8 @@ function createInitialState(payload: FileUrlLaunchPayload): {
     expandedIds: new Set([pathSegmentsToId(workspace.id, [])]),
     selectedPath,
     markdown: payload.markdown,
-    message: ''
+    message: '',
+    sidebar: readReaderSidebarState()
   };
 }
 

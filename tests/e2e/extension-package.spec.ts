@@ -58,6 +58,8 @@ test('打包后的 Chrome 扩展在 file:// Markdown 页面内直渲染并识别
     await page.getByRole('button', { name: /sub/ }).click();
     await page.getByRole('button', { name: /guide\.markdown/ }).click();
     await expect(page.getByRole('heading', { name: 'Guide Fixture' })).toBeVisible();
+    // 点击目录树中的本地文件后整页导航到该文件，浏览器地址栏更新为该文件完整路径，方便复制。
+    await expect(page).toHaveURL(/guide\.markdown$/);
 
     const resizer = page.getByRole('separator', { name: '调整目录和正文宽度' });
     const resizerBox = await resizer.boundingBox();

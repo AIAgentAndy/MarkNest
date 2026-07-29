@@ -30,6 +30,8 @@ async function bootstrapFileUrlInlineReader() {
 
   const payload = await createLaunchPayloadFromCurrentPage();
   if (!payload) {
+    // 不接管该页面（例如在线 HTML 网页）时，移除启动阶段预载的样式，避免影响原始页面。
+    removeInlineReaderStylesheet(document);
     return;
   }
 
@@ -44,21 +46,41 @@ async function createLaunchPayloadFromCurrentPage(): Promise<FileUrlLaunchPayloa
 
   const currentUrl = window.location.href;
   if (shouldLaunchLocalMarkdown(currentUrl)) {
-    const backgroundPayload = await readFileUrlMarkdownPayloadFromBackground(currentUrl);
+    let backgroundPayload: FileUrlLaunchPayload | null = null;
+    try {
+      backgroundPayload = await readFileUrlMarkdownPayloadFromBackground(currentUrl);
+    } catch {
+      // 后台判定该地址不可作为原始 Markdown 渲染（例如在线 HTML 网页）时，
+      // 不接管该页面，避免把整页 HTML 当 Markdown 渲染导致浏览器卡死。
+      backgroundPayload = null;
+    }
+
     if (backgroundPayload) {
       return backgroundPayload;
     }
 
-    const filePayload = createFileUrlInlineLaunchPayload(document, currentUrl);
-    if (!filePayload.markdown.trim()) {
-      return null;
+    // 仅本地 file:// Markdown 在后台不可用时回退到页面内 <pre> 文本；
+    // 在线地址不再回退到 body.innerText，避免误把已渲染网页当 Markdown。
+    if (currentUrl.startsWith('file:')) {
+      const filePayload = createFileUrlInlineLaunchPayload(document, currentUrl);
+      if (!filePayload.markdown.trim()) {
+        return null;
+      }
+
+      return (await createFileUrlDirectoryLaunchPayload(filePayload)) ?? filePayload;
     }
 
-    return (await createFileUrlDirectoryLaunchPayload(filePayload)) ?? filePayload;
+    return null;
   }
 
   if (shouldLaunchLocalMarkdownDirectory(currentUrl)) {
-    const backgroundPayload = await readFileUrlDirectoryPayloadFromBackground(currentUrl);
+    let backgroundPayload: FileUrlDirectoryLaunchPayload | null = null;
+    try {
+      backgroundPayload = await readFileUrlDirectoryPayloadFromBackground(currentUrl);
+    } catch {
+      backgroundPayload = null;
+    }
+
     if (backgroundPayload) {
       return backgroundPayload;
     }
@@ -146,6 +168,7 @@ function mountFileUrlReader(payload: FileUrlLaunchPayload) {
   const rootElement = document.createElement('div');
   rootElement.id = 'marknest-file-url-root';
   document.documentElement.dataset.marknestMounted = 'true';
+  enableInlineReaderStylesheet(document);
   installMarkNestDocumentChrome(getLaunchTitle(payload));
   document.body.hidden = true;
   document.body.innerHTML = '';
@@ -153,6 +176,19 @@ function mountFileUrlReader(payload: FileUrlLaunchPayload) {
   document.body.append(rootElement);
 
   createRoot(rootElement).render(<FileUrlReaderApp payload={payload} />);
+}
+
+function enableInlineReaderStylesheet(documentRef: Document): void {
+  const stylesheet = documentRef.head.querySelector<HTMLLinkElement>(
+    'link[data-marknest-inline-reader-style="true"]'
+  );
+  if (stylesheet) {
+    stylesheet.disabled = false;
+  }
+}
+
+function removeInlineReaderStylesheet(documentRef: Document): void {
+  documentRef.head.querySelector('link[data-marknest-inline-reader-style="true"]')?.remove();
 }
 
 function installMarkNestDocumentChrome(title: string) {

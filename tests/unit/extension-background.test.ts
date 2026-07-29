@@ -173,6 +173,72 @@ describe('extension background', () => {
     });
   });
 
+  it('在线地址返回 HTML 网页时拒绝当 Markdown 渲染，避免整页 HTML 卡死浏览器', async () => {
+    const sendResponse = vi.fn();
+    const fetchRemote = vi.fn(async (url: string) => {
+      return new Response(
+        url === 'https://github.com/owner/repo/blob/main/README_ZH.md'
+          ? '<!doctype html><html><body><h1>README</h1><pre>大量已渲染 HTML</pre></body></html>'
+          : '',
+        {
+          status: url === 'https://github.com/owner/repo/blob/main/README_ZH.md' ? 200 : 404,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8'
+          }
+        }
+      );
+    });
+    vi.stubGlobal('fetch', fetchRemote);
+
+    const keepChannelOpen = await handleExtensionMessage(
+      {
+        type: 'MARKNEST_READ_FILE_URL_MARKDOWN',
+        fileUrl: 'https://github.com/owner/repo/blob/main/README_ZH.md'
+      },
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
+    });
+
+    expect(keepChannelOpen).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: false,
+      error: '该在线地址返回的是 HTML 网页而非原始 Markdown 文本，已跳过渲染。'
+    });
+  });
+
+  it('在线原始 Markdown（非 HTML）仍正常读取正文', async () => {
+    const sendResponse = vi.fn();
+    const fetchRemote = vi.fn(async (url: string) => {
+      return new Response(url === 'https://raw.example.com/guide.md' ? '# Raw\n\n正文' : '', {
+        status: url === 'https://raw.example.com/guide.md' ? 200 : 404,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8'
+        }
+      });
+    });
+    vi.stubGlobal('fetch', fetchRemote);
+
+    await handleExtensionMessage(
+      {
+        type: 'MARKNEST_READ_FILE_URL_TEXT',
+        fileUrl: 'https://raw.example.com/guide.md'
+      },
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
+    });
+
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: true,
+      markdown: '# Raw\n\n正文'
+    });
+  });
+
   it('拒绝非 Markdown 后台读取请求', async () => {
     const sendResponse = vi.fn();
 

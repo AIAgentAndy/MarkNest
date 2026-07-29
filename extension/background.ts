@@ -119,7 +119,7 @@ async function readMarkdownPayload(fileUrl: string): Promise<FileUrlBackgroundRe
   }
 
   try {
-    const markdown = await fetchText(parsed.href);
+    const markdown = await fetchMarkdownText(parsed.href);
     const filePayload: FileUrlFileLaunchPayload = {
       type: 'file-url',
       fileName: getFileName(parsed),
@@ -181,7 +181,7 @@ async function readMarkdownText(fileUrl: string): Promise<FileUrlBackgroundRespo
   try {
     return {
       ok: true,
-      markdown: await fetchText(parsed.href)
+      markdown: await fetchMarkdownText(parsed.href)
     };
   } catch (error) {
     return {
@@ -310,6 +310,29 @@ async function fetchText(url: string): Promise<string> {
   }
 
   return response.text();
+}
+
+// 读取 Markdown 正文：在线地址若返回 HTML 网页（如 GitHub blob 视图），
+// 说明并非原始 Markdown 文本。直接交给重型渲染管线处理整页 HTML 会卡死浏览器，
+// 因此在此提前拒绝，交由页面入口决定不接管该页面。
+async function fetchMarkdownText(url: string): Promise<string> {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    credentials: 'omit'
+  });
+  if (!response.ok && !(response.status === 0 && url.startsWith('file://'))) {
+    throw new Error(`读取本地 Markdown 失败：${response.status}`);
+  }
+
+  if ((url.startsWith('http://') || url.startsWith('https://')) && isHtmlResponse(response)) {
+    throw new Error('该在线地址返回的是 HTML 网页而非原始 Markdown 文本，已跳过渲染。');
+  }
+
+  return response.text();
+}
+
+function isHtmlResponse(response: Response): boolean {
+  return (response.headers.get('Content-Type') ?? '').toLowerCase().includes('text/html');
 }
 
 async function fetchDirectoryHtml(directoryUrl: string): Promise<string | null> {

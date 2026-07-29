@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   installFileUrlInlineReaderStyles,
+  removeFileUrlInlineReaderStyles,
   shouldLoadFileUrlInlineReader
 } from '../../extension/file-url-inline-boot';
 
@@ -24,7 +25,7 @@ describe('file-url-inline-boot', () => {
     expect(shouldLoadFileUrlInlineReader('https://example.com/docs/guide.html')).toBe(false);
   });
 
-  it('按需插入直渲染样式且不会重复插入', () => {
+  it('按需预载禁用样式且不会重复插入，避免判定渲染前影响原始页面', () => {
     installFileUrlInlineReaderStyles(document, 'chrome-extension://marknest/file-url-inline-entry.css');
     installFileUrlInlineReaderStyles(document, 'chrome-extension://marknest/file-url-inline-entry.css');
 
@@ -34,5 +35,19 @@ describe('file-url-inline-boot', () => {
     expect(stylesheets).toHaveLength(1);
     expect(stylesheets[0]?.rel).toBe('stylesheet');
     expect(stylesheets[0]?.href).toBe('chrome-extension://marknest/file-url-inline-entry.css');
+    // 预载阶段保持禁用，待阅读器接管页面后再启用。
+    expect(stylesheets[0]?.disabled).toBe(true);
+  });
+
+  it('不接管页面时移除预载样式，恢复原始页面', () => {
+    installFileUrlInlineReaderStyles(document, 'chrome-extension://marknest/file-url-inline-entry.css');
+    expect(
+      document.head.querySelector('link[data-marknest-inline-reader-style="true"]')
+    ).not.toBeNull();
+
+    removeFileUrlInlineReaderStyles(document);
+    expect(
+      document.head.querySelector('link[data-marknest-inline-reader-style="true"]')
+    ).toBeNull();
   });
 });

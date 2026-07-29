@@ -1,7 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileUrlReaderApp } from '@/features/workspace/components/file-url-reader-app';
+import { navigateToFileUrl } from '@/features/workspace/lib/navigate-to-file-url';
 import type { FileUrlDirectoryLaunchPayload, FileUrlFileLaunchPayload } from '@/features/workspace/lib/file-url-launch';
+
+vi.mock('@/features/workspace/lib/navigate-to-file-url', () => ({
+  navigateToFileUrl: vi.fn()
+}));
 
 describe('FileUrlReaderApp', () => {
   beforeEach(() => {
@@ -20,6 +25,7 @@ describe('FileUrlReaderApp', () => {
       }
     });
     window.localStorage.clear();
+    vi.mocked(navigateToFileUrl).mockClear();
   });
 
   it('在 file:// Markdown 页面内直接渲染当前文件，并识别同级和子目录目录树', async () => {
@@ -52,8 +58,9 @@ describe('FileUrlReaderApp', () => {
     fireEvent.click(screen.getByRole('button', { name: /sub/ }));
     fireEvent.click(screen.getByRole('button', { name: /guide\.markdown/ }));
 
-    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeInTheDocument();
-    expect(fetchMarkdown).toHaveBeenCalledWith('file:///Users/example/docs/sub/guide.markdown');
+    // 点击本地文件触发整页导航，地址栏由新页面承载，应用内不再读取该文件正文。
+    expect(navigateToFileUrl).toHaveBeenCalledWith('file:///Users/example/docs/sub/guide.markdown');
+    expect(fetchMarkdown).not.toHaveBeenCalled();
   });
 
   it('目录树默认只展开当前文件所在路径，其他目录需要手动点击后才展示子项', async () => {
@@ -102,8 +109,8 @@ describe('FileUrlReaderApp', () => {
     fireEvent.click(screen.getByRole('button', { name: /sub/ }));
     fireEvent.click(screen.getByRole('button', { name: /guide\.markdown/ }));
 
-    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeInTheDocument();
-    expect(document.title).toBe('guide.markdown');
+    // 整页导航切换文件，标签页 title 由新页面在挂载时同步。
+    expect(navigateToFileUrl).toHaveBeenCalledWith('file:///Users/example/docs/sub/guide.markdown');
   });
 
   it('目录载荷缺少当前正文时，自动读取选中文件并渲染正文和大纲', async () => {
@@ -157,15 +164,9 @@ describe('FileUrlReaderApp', () => {
     fireEvent.click(screen.getByRole('button', { name: /sub/ }));
     fireEvent.click(screen.getByRole('button', { name: /guide\.markdown/ }));
 
-    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeInTheDocument();
-    expect(screen.getByText('后台读取的子目录文件')).toBeInTheDocument();
-    expect(sendMessage).toHaveBeenCalledWith(
-      {
-        type: 'MARKNEST_READ_FILE_URL_TEXT',
-        fileUrl: 'file:///Users/example/docs/sub/guide.markdown'
-      },
-      expect.any(Function)
-    );
+    // 点击本地文件改为整页导航，不再通过后台读取正文。
+    expect(navigateToFileUrl).toHaveBeenCalledWith('file:///Users/example/docs/sub/guide.markdown');
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(fetchMarkdown).not.toHaveBeenCalled();
   });
 
@@ -377,6 +378,29 @@ describe('FileUrlReaderApp', () => {
     fireEvent.pointerUp(window, { clientX: 80, pointerId: 2 });
 
     expect(shell).toHaveAttribute('data-sidebar-collapsed', 'true');
+  });
+
+  it('侧栏展开状态与宽度按目录持久化，整页导航后重新挂载可恢复', async () => {
+    const { container, unmount } = render(<FileUrlReaderApp payload={createLaunchPayload()} />);
+    await screen.findByRole('heading', { name: 'Current' });
+
+    let shell = container.querySelector<HTMLElement>('.file-url-app-shell');
+    expect(shell).toHaveAttribute('data-sidebar-collapsed', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: '显示左侧目录或大纲' }));
+    fireEvent.click(screen.getByRole('tab', { name: '显示文件目录' }));
+    shell = container.querySelector<HTMLElement>('.file-url-app-shell');
+    expect(shell).toHaveAttribute('data-sidebar-collapsed', 'false');
+    expect(screen.getByRole('tab', { name: '显示文件目录' })).toHaveAttribute('aria-selected', 'true');
+
+    unmount();
+
+    const { container: secondContainer } = render(<FileUrlReaderApp payload={createLaunchPayload()} />);
+    await screen.findByRole('heading', { name: 'Current' });
+    const restoredShell = secondContainer.querySelector<HTMLElement>('.file-url-app-shell');
+    // 整页导航会重置组件状态，持久化的侧栏布局在重新挂载时同步恢复。
+    expect(restoredShell).toHaveAttribute('data-sidebar-collapsed', 'false');
+    expect(screen.getByRole('tab', { name: '显示文件目录' })).toHaveAttribute('aria-selected', 'true');
   });
 });
 
